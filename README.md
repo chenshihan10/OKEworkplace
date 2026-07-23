@@ -67,7 +67,8 @@ python entry_exe.py
 
 ```
 OKEworkplace/
-├── OKEworkplace.exe              # 一键启动（独立窗口，不依赖浏览器）
+├── OKEworkplace.exe              # 一键启动（双击即可）
+├── _internal/                    # 运行时依赖（自动生成，勿删除）
 ├── README.md
 ├── docs/
 │   ├── V2.1_方案设计文档.md       # v2.1 设计规格
@@ -96,8 +97,10 @@ OKEworkplace/
 │   │   │   └── alert_store.py     # 告警去重
 │   │   └── strategy/
 │   │       └── trading_rules.py   # v2.0 规则 (已降级)
-│   └── frontend/
-│       └── index_v2.html          # 前端监控面板
+├── frontend/
+│   ├── src/
+│   │   └── main.js                 # 前端逻辑脚本
+│   └── index_v2.html               # 前端监控面板
 └── .venv/                         # Python 虚拟环境
 ```
 

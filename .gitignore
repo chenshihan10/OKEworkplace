@@ -29,5 +29,6 @@ Thumbs.db
 
 # Build artifacts
 OKEworkplace.exe
+_internal/
 *.spec
 build_result.txt.err

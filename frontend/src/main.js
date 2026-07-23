@@ -39,12 +39,18 @@ const labels = {
   realData: "实时数据 (OKX)",
   fallbackData: "本地数据",
   proxyDisabled: "代理已禁用",
-  marketScore: "市场评分",
-  capitalBehavior: "资金行为",
-  trendScore: "趋势",
-  capitalScore: "资金",
-  orderflowScore: "订单流",
-  riskScore: "风险",
+  marketScore: "综合评分",
+  directionLong: "做多",
+  directionShort: "做空",
+  directionNeutral: "中性",
+  riskLow: "低风险",
+  riskMedium: "中风险",
+  riskHigh: "高风险",
+  trendComp: "趋势 (30)",
+  momentumComp: "动量 (20)",
+  volumeComp: "成交量 (20)",
+  oiComp: "OI (20)",
+  fundingComp: "费率 (10)",
 };
 
 // ============ 格式化函数 ============
@@ -173,17 +179,20 @@ function renderMarketCards(items, prices, signals) {
     const source = (ticker.source || "-").toUpperCase();
     const sourceClass = source === "OKX" ? "source-real" : "source-fallback";
 
-    // 市场状态图标
+    // 市场状态 / 方向 (v2.1)
     let stateText = "-";
     let scoreText = "-/100";
+    const dirIcons = { LONG: "\u{1F7E2}", SHORT: "\u{1F534}", NEUTRAL: "\u{26AA}" };
 
     if (analysis.isSyncing) {
       stateText = `<span style="color: #f59e0b; font-size: 0.75rem; animation: pulse 1.5s infinite;">⌛ 正在加载数据 (~${analysis.estimated_data_size})</span>`;
       scoreText = `<span style="color: #94a3b8; font-size: 0.75rem;">预计需 ${analysis.estimated_wait_time}</span>`;
-    } else if (analysis.market_state) {
-      const stateIcon = { "强势": "📈", "震荡偏多": "➡️", "震荡": "↔️", "弱势": "📉" }[analysis.market_state] || "❓";
-      stateText = `${stateIcon} ${analysis.market_state}`;
-      scoreText = `${analysis.market_score || "-"}/100`;
+    } else if (analysis.score != null) {
+      const dir = analysis.direction || "NEUTRAL";
+      const icon = dirIcons[dir] || "❓";
+      const scoreColor = analysis.score >= 85 ? "#10b981" : analysis.score >= 70 ? "#f59e0b" : analysis.score >= 55 ? "#3b82f6" : "#94a3b8";
+      stateText = `${icon} ${dir === "LONG" ? labels.directionLong : dir === "SHORT" ? labels.directionShort : labels.directionNeutral}`;
+      scoreText = `<span style="color:${scoreColor};font-weight:bold;">${analysis.score || "-"}/100</span> ${analysis.level || ""}`;
     }
 
     return `
@@ -199,7 +208,7 @@ function renderMarketCards(items, prices, signals) {
         <div class="market-price-row">
           <div class="price">${fmtNumber(ticker.price)}</div>
           <div class="market-meta">
-            <div>市场状态: <strong>${stateText}</strong></div>
+            <div>方向: <strong>${stateText}</strong></div>
             <div>评分: <strong>${scoreText}</strong></div>
           </div>
         </div>
@@ -235,35 +244,56 @@ function renderMarketScores(items) {
       `;
     }
 
-    const { market_score, trend_score, capital_score, orderflow_score, risk_score } = analysis;
+    const score = analysis.score || 0;
+    const comps = analysis.components || {};
     
-    // 绘制评分条
-    const makeBar = (score, max = 25) => {
-      const percent = Math.min(100, (score / max) * 100);
-      return `<div class="score-bar" style="width: ${percent}%"></div>`;
+    // v2.1 五维评分条
+    const makeBar = (val, max) => {
+      const percent = Math.min(100, (val / max) * 100);
+      const color = val >= max * 0.7 ? "#10b981" : val >= max * 0.4 ? "#f59e0b" : "#ef4444";
+      return `<div class="score-bar" style="width: ${percent}%; background: ${color};"></div>`;
     };
+
+    // 评分颜色
+    const scoreColor = score >= 85 ? "#10b981" : score >= 70 ? "#f59e0b" : score >= 55 ? "#3b82f6" : "#94a3b8";
+    const dirIcon = { LONG: "\u{1F7E2}", SHORT: "\u{1F534}", NEUTRAL: "\u{26AA}" }[analysis.direction] || "\u{26AA}";
+    const riskColors = { LOW: "#10b981", MEDIUM: "#f59e0b", HIGH: "#ef4444" };
+    const riskLabel = { LOW: labels.riskLow, MEDIUM: labels.riskMedium, HIGH: labels.riskHigh };
 
     return `
       <div class="score-card">
-        <div class="score-title">${item.symbol}</div>
-        <div class="score-main">${market_score || 0}/100</div>
+        <div class="score-title">${item.symbol} ${dirIcon}</div>
+        <div class="score-main" style="color: ${scoreColor};">${score}/100</div>
+        <div style="font-size:0.8rem;color:#94a3b8;margin-bottom:0.5rem;">
+          ${analysis.level || "-"} | 
+          <span style="color:${riskColors[analysis.risk] || '#94a3b8'};">${riskLabel[analysis.risk] || analysis.risk || "-"}</span>
+        </div>
         
         <div class="score-components">
           <div class="component">
-            <label>${labels.trendScore}</label>
-            <div class="bar-container">${makeBar(trend_score || 0)}</div>
+            <label>${labels.trendComp}</label>
+            <div class="bar-container">${makeBar(comps.trend || 0, 30)}</div>
+            <span>${comps.trend || 0}</span>
           </div>
           <div class="component">
-            <label>${labels.capitalScore}</label>
-            <div class="bar-container">${makeBar(capital_score || 0)}</div>
+            <label>${labels.momentumComp}</label>
+            <div class="bar-container">${makeBar(comps.momentum || 0, 20)}</div>
+            <span>${comps.momentum || 0}</span>
           </div>
           <div class="component">
-            <label>${labels.orderflowScore}</label>
-            <div class="bar-container">${makeBar(orderflow_score || 0)}</div>
+            <label>${labels.volumeComp}</label>
+            <div class="bar-container">${makeBar(comps.volume || 0, 20)}</div>
+            <span>${comps.volume || 0}</span>
           </div>
-          <div class="component risk">
-            <label>${labels.riskScore}</label>
-            <div class="bar-container">${makeBar(Math.abs(risk_score || 0))}</div>
+          <div class="component">
+            <label>${labels.oiComp}</label>
+            <div class="bar-container">${makeBar(comps.oi || 0, 20)}</div>
+            <span>${comps.oi || 0}</span>
+          </div>
+          <div class="component">
+            <label>${labels.fundingComp}</label>
+            <div class="bar-container">${makeBar(comps.funding || 0, 10)}</div>
+            <span>${comps.funding || 0}</span>
           </div>
         </div>
       </div>
@@ -334,30 +364,29 @@ function renderSignals(signalsBySymbol) {
 
   target.innerHTML = signals.map((signal) => {
     const analysis = globalData.analysis[signal.symbol];
-    const recommendation = analysis?.recommendation || {};
+    if (!analysis || analysis.isSyncing) return "";
 
-    const signalMap = { buy: "买入", sell: "卖出", wait: "等待" };
-    const signalEmoji = { BUY: "🟢", SELL: "🔴", AVOID: "⛔", MONITOR: "🟡", WAIT: "⏳" };
-    
-    const action = signalMap[signal.action] || "等待";
-    const recSignal = recommendation.signal || "WAIT";
-    const reasons = recommendation.reason || [];
+    const dir = analysis.direction || "NEUTRAL";
+    const dirText = dir === "LONG" ? labels.directionLong : dir === "SHORT" ? labels.directionShort : labels.directionNeutral;
+    const dirEmoji = { LONG: "\u{1F7E2}", SHORT: "\u{1F534}", NEUTRAL: "\u{26AA}" };
+    const reasons = analysis.reasons || [];
+    const scoreColor = (analysis.score || 0) >= 85 ? "#10b981" : (analysis.score || 0) >= 70 ? "#f59e0b" : (analysis.score || 0) >= 55 ? "#3b82f6" : "#94a3b8";
 
     return `
-      <div class="signal-item ${signal.action || "wait"}">
+      <div class="signal-item ${dir.toLowerCase()}">
         <div class="signal-header">
           <strong>${signal.symbol}</strong>
-          <span class="recommendation">
-            ${signalEmoji[recSignal] || "❓"} ${recSignal}
+          <span class="recommendation" style="color:${scoreColor};">
+            ${dirEmoji[dir] || "❓"} ${dirText} 
           </span>
         </div>
         <div class="signal-reason">
           ${reasons.map(r => `<div>• ${r}</div>`).join("")}
         </div>
-        <p class="signal-desc">${signal.signal_strength || ""} ${action}</p>
+        <p class="signal-desc">评分: <strong style="color:${scoreColor};">${analysis.score || 0}/100</strong> (${analysis.level || "-"}) | 风险: ${analysis.risk || "-"}</p>
       </div>
     `;
-  }).join("");
+  }).filter(x => x).join("");
 }
 
 // ============ 订单流渲染（升级版） ============
@@ -424,15 +453,16 @@ function renderWatchlist(items, prices, signals) {
     const ticker = prices[item.symbol] || {};
     const signal = signals[item.symbol] || {};
     const analysis = globalData.analysis[item.symbol] || {};
+    const dirIcon = { LONG: "\u{1F7E2}", SHORT: "\u{1F534}", NEUTRAL: "\u{26AA}" }[analysis.direction] || "";
 
     return `
       <div class="watch-row" data-symbol="${item.symbol}">
-        <span>${item.symbol}</span>
+        <span>${dirIcon} ${item.symbol}</span>
         <span>${item.timeframe}</span>
         <span>${fmtNumber(ticker.price)}</span>
-        <span>${signal.trend || "-"}</span>
+        <span>${analysis.direction || "-"}</span>
         <span>${(ticker.source || "-").toUpperCase()}</span>
-        <span class="score">${analysis.market_score || "-"}</span>
+        <span class="score">${analysis.score || "-"}</span>
         <span><button class="del-btn" onclick="removeCoin('${item.symbol}')">删除</button></span>
       </div>
     `;

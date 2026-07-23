@@ -1,5 +1,7 @@
 """PyInstaller EXE entry point - starts server and opens GUI window"""
 import sys
+import os
+import io
 import threading
 import time
 import urllib.request
@@ -7,12 +9,32 @@ import json
 import signal
 import socket
 import ctypes
+import traceback
 from pathlib import Path
+
+# ══════════════════════════════════════════════════════
+# PyInstaller --windowed 模式下 sys.stdout/stderr 为 None，
+# 导致 uvicorn 在 log config 中调用 .isatty() 时报错。
+# 需要在导入 uvicorn 之前替换为有效的流，使用 UTF-8 编码
+# 避免 Windows GBK 环境下 emoji 等字符导致 UnicodeEncodeError
+# ══════════════════════════════════════════════════════
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+elif hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w', encoding='utf-8')
+elif hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # Add backend dir to path for imports
 _backend_dir = Path(__file__).resolve().parent
 if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
+
+# 错误日志文件（用于诊断无法启动的问题）
+_LOG_DIR = _backend_dir if not getattr(sys, 'frozen', False) else Path.cwd()
+_STARTUP_LOG = _LOG_DIR / "startup_error.log"
 
 HOST = "127.0.0.1"
 PORT = 8000
@@ -48,16 +70,23 @@ def _wait_for_server(port, timeout=30):
 
 def _start_server(port):
     """在后台线程中启动 uvicorn（静默模式）"""
-    import uvicorn
-    from app.main import app
-    uvicorn.run(
-        app,
-        host=HOST,
-        port=port,
-        reload=False,
-        log_level="warning",
-        access_log=False,
-    )
+    try:
+        import uvicorn
+        from app.main import app
+        uvicorn.run(
+            app,
+            host=HOST,
+            port=port,
+            reload=False,
+            log_config=None,  # 禁用默认 log config（避免 isatty 错误）
+            log_level="warning",
+            access_log=False,
+        )
+    except Exception:
+        with open(_STARTUP_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 服务器启动失败:\n")
+            f.write(traceback.format_exc())
+            f.write("\n")
 
 
 def _confirm_exit():
@@ -152,9 +181,9 @@ if __name__ == "__main__":
     if not _wait_for_server(port):
         print("=" * 46)
         print(f"  ❌ 服务启动失败，请检查端口 {port} 是否被占用")
-        print("  可运行 stop.bat 释放端口后重试")
+        print("  请查看 startup_error.log 了解详情")
         print("=" * 46)
-        input("\n按 Enter 退出...")
+        time.sleep(5)
         sys.exit(1)
 
     print("=" * 46)
