@@ -48,7 +48,7 @@ def health() -> dict:
 
 @app.get("/")
 def root():
-    return RedirectResponse("/index_v2.html")
+    return RedirectResponse("/index.html")
 
 
 @app.post("/api/shutdown")

@@ -59,7 +59,7 @@ pip install -r requirements.txt
 
 # 浏览器模式
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-# 打开 http://127.0.0.1:8000/index_v2.html
+# 打开 http://127.0.0.1:8000/index.html
 
 # 独立窗口模式
 python entry_exe.py
@@ -102,7 +102,7 @@ OKEworkplace/
 ├── frontend/
 │   ├── src/
 │   │   └── main.js                 # 前端逻辑脚本
-│   └── index_v2.html               # 前端监控面板
+│   └── index.html               # 前端监控面板
 └── .venv/                         # Python 虚拟环境
 ```
 

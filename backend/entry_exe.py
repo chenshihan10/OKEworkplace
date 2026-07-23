@@ -111,7 +111,7 @@ def _open_gui_window(port):
 
         window = webview.create_window(
             title="OKEworkplace - 交易分析终端",
-            url=f"http://{HOST}:{port}/index_v2.html",
+            url=f"http://{HOST}:{port}/index.html",
             width=1280,
             height=800,
             min_size=(960, 600),
@@ -142,7 +142,7 @@ def _open_gui_window(port):
 def _open_browser(port):
     """打开系统默认浏览器（回退方案）"""
     import webbrowser
-    url = f"http://{HOST}:{port}/index_v2.html"
+    url = f"http://{HOST}:{port}/index.html"
     try:
         webbrowser.open(url)
     except Exception as e:
