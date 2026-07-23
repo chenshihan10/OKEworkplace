@@ -28,10 +28,7 @@ Thumbs.db
 # Backups
 代码备份/
 
-# Docs (keep only essential ones)
-docs/
-CHANGLOG.md
-DATA_OPTIMIZATION.md
+# Docs (tracked in docs/ folder)
 DELIVERY_NOTES.md
 FILES_INDEX.md
 PHASE4_SUMMARY.md
