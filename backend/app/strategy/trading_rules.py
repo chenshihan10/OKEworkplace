@@ -1,3 +1,9 @@
+"""
+v2.0 策略规则模块 — 已降级为 v2.1
+
+v2.1 中评分逻辑已迁移至 app.model.market_score（五维对称评分）。
+本模块保留仅供向后兼容，新代码应使用 signal_engine.evaluate() 获取 AnalysisResult。
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone

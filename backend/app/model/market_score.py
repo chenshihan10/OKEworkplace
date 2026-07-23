@@ -1,358 +1,649 @@
+"""v2.1 市场评分引擎 — 五维对称评分
+
+评分流程：
+  1. 方向判定（LONG / SHORT / NEUTRAL）
+  2. 在判定方向上质量评分（0-100）
+  3. 风险评估（LOW / MEDIUM / HIGH）
+  4. 规则解释生成
+
+核心设计：多空评分完全对称，同一套逻辑、方向参数切换。
 """
-市场评分算法模块
-基于趋势、资金、订单流、风险四个维度对市场进行评分（0-100）
-"""
-from typing import Dict, List, Tuple
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 
-@dataclass
-class PriceAction:
-    """价格行动"""
-    current_price: float
-    previous_price: float = None
-    change_pct: float = 0.0
-    
-    def __post_init__(self):
-        if self.previous_price:
-            self.change_pct = (self.current_price - self.previous_price) / self.previous_price * 100
-
+# ══════════════════════════════════════════════════
+# 数据类
+# ══════════════════════════════════════════════════
 
 @dataclass
-class MarketAnalysis:
-    """市场分析结果"""
+class AnalysisResult:
+    """v2.1 统一分析输出"""
     symbol: str
     price: float
-    market_score: int  # 0-100
-    market_state: str  # 强势、震荡、弱势
-    confidence: int  # 可信度 0-100
-    
-    # 评分组成
-    trend_score: int = 0  # 趋势评分
-    capital_score: int = 0  # 资金评分
-    orderflow_score: int = 0  # 订单流评分
-    risk_score: int = 0  # 风险评分
-    
-    # 详细信息
-    oi_change: str = ""
-    funding_rate: str = ""
-    cvd: float = 0.0
-    capital_behavior: Dict = field(default_factory=dict)
-    
-    # 建议
-    recommendation: Dict = field(default_factory=lambda: {"signal": "WAIT", "reason": []})
-    
+    timestamp: str
+
+    # 核心
+    score: int = 0          # 0-100
+    level: str = "放弃"      # 强烈关注 / 重点关注 / 观察 / 中性 / 放弃
+    direction: str = "NEUTRAL"  # LONG / SHORT / NEUTRAL
+
+    # 风险
+    risk: str = "LOW"       # LOW / MEDIUM / HIGH
+    risk_factors: List[str] = field(default_factory=list)
+
+    # 评分构成
+    components: Dict[str, int] = field(default_factory=lambda: {
+        "trend": 0, "momentum": 0, "volume": 0, "oi": 0, "funding": 0,
+    })
+
+    # 解释
+    reasons: List[str] = field(default_factory=list)
+
+    # 指标快照
+    indicators: Dict = field(default_factory=dict)
+
     # 数据源
-    data_source: str = "OKX_REAL"
+    data_source: str = "okx"
 
 
-class TrendAnalyzer:
-    """趋势分析器"""
-    
-    @staticmethod
-    def analyze(
-        candles: List[Dict],
-        macd: Dict = None,
-        ema_data: Dict = None
-    ) -> int:
-        """
-        分析趋势评分
-        
-        Args:
-            candles: K线数据 [{"close": 1000, "high": 1100, ...}]
-            macd: MACD 数据 {"diff": 0.5, "dea": 0.3}
-            ema_data: EMA 数据 {"ema20": 1000, "ema60": 980, "ema120": 950}
-        
-        Returns:
-            趋势评分 0-25
-        """
-        score = 0
-        
-        if not candles or len(candles) < 2:
-            return 0
-        
-        # K线趋势分析（0-10）
-        recent_candles = candles[-5:]  # 最近5条
-        bullish_count = sum(1 for c in recent_candles if c.get("close", 0) > c.get("open", 0))
-        score += (bullish_count / len(recent_candles)) * 10
-        
-        # MACD分析（0-8）
-        if macd:
-            diff = macd.get("diff", 0)
-            dea = macd.get("dea", 0)
-            
-            if diff > dea > 0:  # 强势上升
-                score += 8
-            elif diff > dea:  # 温和上升
-                score += 5
-            elif diff < dea < 0:  # 强势下降
-                score += 0
-            elif diff < dea:  # 温和下降
-                score += 2
-        
-        # EMA分析（0-7）
-        if ema_data:
-            close = candles[-1].get("close", 0)
-            ema20 = ema_data.get("ema20", 0)
-            ema60 = ema_data.get("ema60", 0)
-            ema120 = ema_data.get("ema120", 0)
-            
-            if close > ema20 > ema60 > ema120:  # 多头排列
-                score += 7
-            elif close > ema20 > ema60:  # 部分多头
-                score += 5
-            elif close > ema20:  # 略微多头
-                score += 3
-        
-        return min(int(score), 25)
+# ══════════════════════════════════════════════════
+# 方向判定
+# ══════════════════════════════════════════════════
+
+def _determine_direction(
+    ema20: Optional[float],
+    ema60: Optional[float],
+    rsi_val: Optional[float],
+    macd_diff: Optional[float],
+    macd_dea: Optional[float],
+    oi_change_pct: float,
+) -> str:
+    """
+    判定方向：LONG / SHORT / NEUTRAL。
+    四条件中满足 ≥3 个则判定该方向，否则 NEUTRAL。
+    """
+    if None in (ema20, ema60, rsi_val, macd_diff, macd_dea):
+        return "NEUTRAL"
+
+    long_checks = 0
+    short_checks = 0
+
+    # EMA 排列
+    if ema20 > ema60:
+        long_checks += 1
+    elif ema20 < ema60:
+        short_checks += 1
+
+    # RSI 区间
+    if 45 <= rsi_val <= 70:
+        long_checks += 1
+    if 30 <= rsi_val <= 55:
+        short_checks += 1
+
+    # MACD 排列
+    if macd_diff > macd_dea:
+        long_checks += 1
+    elif macd_diff < macd_dea:
+        short_checks += 1
+
+    # OI 验证（OI 增加说明资金在参与）
+    if oi_change_pct >= 0:
+        long_checks += 1
+        short_checks += 1
+
+    if long_checks >= 3:
+        return "LONG"
+    elif short_checks >= 3:
+        return "SHORT"
+    return "NEUTRAL"
 
 
-class CapitalAnalyzer:
-    """资金分析器"""
-    
-    @staticmethod
-    def analyze(
-        oi_change_pct: float,
-        funding_rate: float,
-        price_change_pct: float
-    ) -> int:
-        """
-        分析资金评分
-        
-        Args:
-            oi_change_pct: OI变化百分比
-            funding_rate: 资金费率
-            price_change_pct: 价格变化百分比
-        
-        Returns:
-            资金评分 0-25
-        """
-        score = 0
-        
-        # 价格上涨 + OI上升 = 新增资金进入
-        if price_change_pct > 0 and oi_change_pct > 0:
-            score += 20
-        elif price_change_pct > 0 and oi_change_pct == 0:
-            # 价格上升但OI不变 = 空头回补
-            score += 15
-        elif price_change_pct > 0 and oi_change_pct < 0:
-            # 价格上升但OI下降 = 资金不足，风险
-            score += 10
-        
-        # 价格下跌 + OI下降 = 资金撤离
-        if price_change_pct < 0 and oi_change_pct < 0:
-            score += 0
-        
-        # 资金费率分析
-        if funding_rate > 0.01:  # 超过0.01 = 多头拥挤
-            score -= 3
-        elif funding_rate < -0.01:  # 负数 = 空头拥挤
+# ══════════════════════════════════════════════════
+# 评分维度（对称实现）
+# ══════════════════════════════════════════════════
+
+def _score_trend(
+    direction: str,
+    ema20: float,
+    ema60: float,
+    rsi_val: float,
+    macd_diff: float,
+    macd_dea: float,
+    macd_histogram: float,
+    oi_change_pct: float,
+    prev_macd_histogram: Optional[float] = None,
+) -> int:
+    """趋势评分 (0-30)。direction 为 LONG 或 SHORT；NEUTRAL 时返回一半。"""
+    if direction == "NEUTRAL":
+        return 10  # 中性基础分
+
+    score = 0
+
+    # EMA 排列强度
+    gap_pct = abs(ema20 - ema60) / ema60 * 100
+    if gap_pct > 2.0:
+        score += 12
+    elif gap_pct > 0.5:
+        score += 8
+    else:
+        score += 4
+
+    # RSI 区间
+    if direction == "LONG":
+        if 50 <= rsi_val <= 62:
+            score += 8
+        elif 62 < rsi_val <= 68:
+            score += 5
+        elif rsi_val > 72:
             score += 2
-        
-        return max(0, min(int(score), 25))
-
-
-class OrderFlowAnalyzer:
-    """订单流分析器"""
-    
-    @staticmethod
-    def analyze(
-        cvd: float,
-        buy_volume: float,
-        sell_volume: float,
-        cvd_trend: str = "neutral"
-    ) -> int:
-        """
-        分析订单流评分
-        
-        Args:
-            cvd: CVD值（累积成交量差）
-            buy_volume: 主动买成交量
-            sell_volume: 主动卖成交量
-            cvd_trend: CVD趋势 "up", "down", "neutral"
-        
-        Returns:
-            订单流评分 0-25
-        """
-        score = 0
-        
-        # CVD分析
-        if cvd > 0:
-            score += 10
-        elif cvd < 0:
-            score += 0
         else:
+            score += 3  # 45~50，偏弱但有方向
+    else:  # SHORT
+        if 38 <= rsi_val <= 50:
+            score += 8
+        elif 32 <= rsi_val < 38:
             score += 5
-        
-        # 主动买卖比
-        total_volume = buy_volume + sell_volume
-        if total_volume > 0:
-            buy_ratio = buy_volume / total_volume
-            if buy_ratio > 0.6:  # 买方占优
-                score += 10
-            elif buy_ratio > 0.55:  # 略微买方
-                score += 7
-            elif buy_ratio < 0.4:  # 卖方占优
-                score += 0
-            else:  # 均衡
-                score += 5
-        
-        # CVD趋势
-        if cvd_trend == "up":
-            score += 5
-        elif cvd_trend == "down":
-            score += 0
-        
-        return min(int(score), 25)
-
-
-class RiskAnalyzer:
-    """风险分析器"""
-    
-    @staticmethod
-    def analyze(
-        funding_rate: float,
-        volatility: float,
-        breakout_failures: int = 0,
-        price_distance_to_resistance: float = 0
-    ) -> int:
-        """
-        分析风险评分
-        
-        Args:
-            funding_rate: 资金费率
-            volatility: 波动率
-            breakout_failures: 突破失败次数
-            price_distance_to_resistance: 价格距离阻力位的距离（百分比）
-        
-        Returns:
-            风险评分 0-25（负数表示高风险）
-        """
-        score = 0
-        
-        # 资金费率风险
-        if funding_rate > 0.05:  # 过高 = 多头拥挤
-            score -= 10
-        elif funding_rate > 0.02:
-            score -= 5
-        
-        # 波动率风险
-        if volatility > 3:  # 波动率很大
-            score -= 5
-        elif volatility > 2:
-            score -= 2
-        
-        # 突破失败风险
-        score -= breakout_failures * 2
-        
-        # 接近阻力位风险
-        if price_distance_to_resistance < 1:  # 距离很近
-            score -= 5
-        elif price_distance_to_resistance < 3:
-            score -= 2
-        
-        return max(-25, min(int(score), 0))
-
-
-class MarketScorer:
-    """市场评分器 - 综合所有分析"""
-    
-    @staticmethod
-    def score(
-        candles: List[Dict],
-        macd: Dict,
-        ema_data: Dict,
-        oi_change_pct: float,
-        funding_rate: float,
-        price_action: PriceAction,
-        cvd: float,
-        buy_volume: float,
-        sell_volume: float,
-        volatility: float = 1.5,
-        data_source: str = "OKX_REAL"
-    ) -> MarketAnalysis:
-        """
-        综合评分
-        
-        Returns:
-            完整的市场分析结果
-        """
-        # 获取各维度评分
-        trend_score = TrendAnalyzer.analyze(candles, macd, ema_data)
-        capital_score = CapitalAnalyzer.analyze(
-            oi_change_pct, 
-            funding_rate, 
-            price_action.change_pct
-        )
-        orderflow_score = OrderFlowAnalyzer.analyze(cvd, buy_volume, sell_volume)
-        risk_score = RiskAnalyzer.analyze(
-            funding_rate, 
-            volatility, 
-            breakout_failures=0
-        )
-        
-        # 综合评分
-        total_score = trend_score + capital_score + orderflow_score + risk_score
-        market_score = max(0, min(100, int(total_score)))
-        
-        # 确定市场状态
-        if market_score >= 70:
-            market_state = "强势"
-        elif market_score >= 50:
-            market_state = "震荡偏多"
-        elif market_score >= 30:
-            market_state = "震荡"
+        elif rsi_val < 28:
+            score += 2
         else:
-            market_state = "弱势"
-        
-        # 确定可信度
-        confidence = min(100, trend_score * 2 + abs(risk_score))
-        
-        return MarketAnalysis(
-            symbol="",  # 由调用者设置
-            price=price_action.current_price,
-            market_score=market_score,
-            market_state=market_state,
-            confidence=confidence,
-            trend_score=trend_score,
-            capital_score=capital_score,
-            orderflow_score=orderflow_score,
-            risk_score=risk_score,
-            oi_change=f"{oi_change_pct:+.1f}%",
-            funding_rate=f"{funding_rate:.4%}",
-            cvd=cvd,
-            data_source=data_source
+            score += 3
+
+    # MACD 状态
+    if direction == "LONG":
+        if macd_diff > macd_dea and macd_histogram > 0:
+            # 柱线扩大还是缩小
+            if prev_macd_histogram is not None and macd_histogram > prev_macd_histogram:
+                score += 6  # 柱线扩大
+            else:
+                score += 4  # 柱线在缩小
+        elif macd_diff > macd_dea:
+            score += 3
+        else:
+            score += 1
+    else:  # SHORT — 镜像
+        if macd_diff < macd_dea and macd_histogram < 0:
+            if prev_macd_histogram is not None and macd_histogram < prev_macd_histogram:
+                score += 6  # 负柱线扩大
+            else:
+                score += 4
+        elif macd_diff < macd_dea:
+            score += 3
+        else:
+            score += 1
+
+    # OI 验证
+    if oi_change_pct > 0:
+        score += 4
+    elif oi_change_pct >= -1:
+        score += 2
+    # else: 0，不扣分
+
+    return min(score, 30)
+
+
+def _score_momentum(
+    direction: str,
+    candles: list,
+    ema20: float,
+    price: float,
+    ema_cross_type: Optional[str],
+    ema_cross_bars: Optional[int],
+) -> int:
+    """动量评分 (0-20)。"""
+    if direction == "NEUTRAL":
+        return 5
+
+    score = 0
+
+    # K 线动量：最近 4 根 K 线中顺势比例
+    recent = candles[-4:] if len(candles) >= 4 else candles
+    if direction == "LONG":
+        bullish = sum(1 for c in recent if c.get("close", 0) > c.get("open", 0))
+    else:
+        bullish = sum(1 for c in recent if c.get("close", 0) < c.get("open", 0))
+
+    if bullish >= 3:
+        score += 8
+    elif bullish == 2:
+        score += 4
+
+    # 价格位置：在 EMA20 的顺势侧
+    if direction == "LONG" and price > ema20:
+        score += 6
+    elif direction == "SHORT" and price < ema20:
+        score += 6
+
+    # 金叉/死叉信号
+    if ema_cross_type:
+        on_correct_side = (
+            (direction == "LONG" and ema_cross_type == "golden") or
+            (direction == "SHORT" and ema_cross_type == "dead")
         )
+        if on_correct_side:
+            if ema_cross_bars is not None and ema_cross_bars <= 3:
+                score += 6
+            elif ema_cross_bars is not None and ema_cross_bars <= 6:
+                score += 3
+
+    return min(score, 20)
 
 
-def calculate_market_score(analysis_inputs: Dict) -> MarketAnalysis:
+def _score_volume(
+    direction: str,
+    current_vol: float,
+    avg_vol: float,
+    candles: list,
+    price: float,
+    ema20: float,
+) -> int:
+    """成交量评分 (0-20)。方向中性维度。"""
+    score = 0
+
+    if avg_vol <= 0 or current_vol is None:
+        return 0
+
+    ratio = current_vol / avg_vol
+
+    # 量能强度
+    if ratio >= 2.0:
+        score += 10
+    elif ratio >= 1.5:
+        score += 7
+    elif ratio >= 1.2:
+        score += 4
+    elif ratio < 0.5:
+        score += 0
+    else:
+        score += 2
+
+    # 量价配合
+    if direction in ("LONG", "SHORT"):
+        # 价格是否顺势
+        prev_price = candles[-2].get("close", price) if len(candles) >= 2 else price
+        price_up = price > prev_price
+        correct_move = (direction == "LONG" and price_up) or (direction == "SHORT" and not price_up)
+
+        if correct_move and ratio >= 1.0:
+            score += 6  # 价顺势 + 放量
+        elif correct_move and ratio < 1.0:
+            score += 2  # 价顺势但缩量
+        elif not correct_move and ratio >= 1.5:
+            score += 0  # 价逆势 + 放量（背离警告）
+        else:
+            score += 1
+
+    # 突破 EMA20 且放量
+    if direction == "LONG" and price > ema20 and ratio >= 1.3:
+        score += 4
+    elif direction == "SHORT" and price < ema20 and ratio >= 1.3:
+        score += 4
+
+    return min(score, 20)
+
+
+def _score_oi(direction: str, oi_change_pct: float) -> int:
+    """OI 评分 (0-20)。"""
+    score = 0
+
+    abs_oi = abs(oi_change_pct)
+
+    # OI 变化幅度
+    if abs_oi > 5:
+        score += 8
+    elif abs_oi > 2:
+        score += 6
+    elif abs_oi > 0:
+        score += 3
+    # else: 0
+
+    # 价-OI 配合（需要 direction 和 oi 方向）
+    if direction == "LONG":
+        if oi_change_pct > 0:
+            score += 8  # 价涨 OI 增 → 资金推动
+        elif oi_change_pct < 0:
+            score += 4  # 价涨 OI 减 → 空头回补
+        else:
+            score += 2
+    elif direction == "SHORT":
+        if oi_change_pct > 0:
+            score += 8  # 价跌 OI 增 → 空头建仓
+        elif oi_change_pct < 0:
+            score += 4  # 价跌 OI 减 → 多头止盈
+        else:
+            score += 2
+    else:
+        score += 3  # NEUTRAL
+
+    # OI 趋势（如果 OI 变化显著）
+    if abs_oi > 3:
+        score += 4
+
+    return min(score, 20)
+
+
+def _score_funding(direction: str, funding_rate: float) -> int:
+    """资金费率评分 (0-10)。反向指标：对手盘拥挤 = 有利。"""
+    if direction == "NEUTRAL":
+        if abs(funding_rate) < 0.01:
+            return 5
+        return 3
+
+    score = 0
+
+    if direction == "LONG":
+        if funding_rate < -0.03:
+            score = 10  # 空头拥挤 → 可能轧空
+        elif -0.01 <= funding_rate <= 0.02:
+            score = 7  # 健康区间
+        elif 0.02 < funding_rate <= 0.05:
+            score = 4  # 偏拥挤
+        elif funding_rate > 0.05:
+            score = 1  # 极度拥挤
+        else:
+            score = 5
+    else:  # SHORT — 镜像
+        if funding_rate > 0.03:
+            score = 10  # 多头拥挤 → 可能回调
+        elif -0.02 <= funding_rate <= 0.01:
+            score = 7
+        elif -0.05 < funding_rate < -0.02:
+            score = 4
+        elif funding_rate < -0.05:
+            score = 1
+        else:
+            score = 5
+
+    return score
+
+
+# ══════════════════════════════════════════════════
+# 风险评级
+# ══════════════════════════════════════════════════
+
+def _assess_risk(
+    direction: str,
+    atr_val: Optional[float],
+    price: float,
+    funding_rate: float,
+    nearest_resistance: Optional[float],
+    nearest_support: Optional[float],
+) -> tuple:
+    """风险评估 → (risk_level, risk_factors)"""
+    factors = []
+    risk_score = 0  # 累积风险分，越高越危险
+
+    # ATR 波动率
+    if atr_val and price > 0:
+        atr_pct = atr_val / price * 100
+        if atr_pct > 4:
+            risk_score += 3
+            factors.append(f"ATR 偏高 ({atr_pct:.1f}%)")
+        elif atr_pct > 2.5:
+            risk_score += 1
+            factors.append(f"ATR 中等 ({atr_pct:.1f}%)")
+
+    # 资金费率极端
+    if abs(funding_rate) > 0.05:
+        risk_score += 3
+        side = "多头" if funding_rate > 0 else "空头"
+        factors.append(f"资金费率极端（{side}拥挤 {funding_rate:.3%}）")
+    elif abs(funding_rate) > 0.03:
+        risk_score += 1
+
+    # 距离关键价位
+    if direction == "LONG" and nearest_resistance and price > 0:
+        distance = (nearest_resistance - price) / price * 100
+        if distance < 1:
+            risk_score += 2
+            factors.append(f"距阻力位极近 ({distance:.1f}%)")
+        elif distance < 3:
+            risk_score += 1
+            factors.append(f"距阻力位较近 ({distance:.1f}%)")
+    elif direction == "SHORT" and nearest_support and price > 0:
+        distance = (price - nearest_support) / price * 100
+        if distance < 1:
+            risk_score += 2
+            factors.append(f"距支撑位极近 ({distance:.1f}%)")
+        elif distance < 3:
+            risk_score += 1
+            factors.append(f"距支撑位较近 ({distance:.1f}%)")
+
+    # 判定等级
+    if risk_score >= 4:
+        return "HIGH", factors
+    elif risk_score >= 2:
+        return "MEDIUM", factors
+    return "LOW", factors
+
+
+# ══════════════════════════════════════════════════
+# 规则解释引擎
+# ══════════════════════════════════════════════════
+
+def _generate_reasons(
+    direction: str,
+    ema20: float,
+    ema60: float,
+    rsi_val: float,
+    macd_cross_type: Optional[str],
+    macd_histogram: float,
+    vol_ratio: float,
+    oi_change_pct: float,
+    funding_rate: float,
+    ema_cross_type: Optional[str],
+    ema_cross_bars: Optional[int],
+    price: float,
+    nearest_resistance: Optional[float],
+    nearest_support: Optional[float],
+) -> List[str]:
+    """生成规则解释数组，按重要性排序。"""
+    reasons = []
+
+    # EMA 排列
+    gap = abs(ema20 - ema60) / ema60 * 100
+    if ema20 > ema60 and gap > 0.5:
+        reasons.append("EMA 多头排列明显" if gap > 1.5 else "EMA20 在 EMA60 上方")
+    elif ema20 < ema60 and gap > 0.5:
+        reasons.append("EMA 空头排列明显" if gap > 1.5 else "EMA20 在 EMA60 下方")
+
+    # RSI
+    if rsi_val > 72:
+        reasons.append(f"RSI 超买 ({rsi_val})，注意回调风险")
+    elif rsi_val < 28:
+        reasons.append(f"RSI 超卖 ({rsi_val})，注意反弹风险")
+    elif direction == "LONG" and 50 <= rsi_val <= 62:
+        reasons.append(f"RSI 处于健康多头区 ({rsi_val})")
+    elif direction == "SHORT" and 38 <= rsi_val <= 50:
+        reasons.append(f"RSI 处于弱势区 ({rsi_val})")
+
+    # EMA 金叉/死叉
+    if ema_cross_type == "golden" and ema_cross_bars is not None and ema_cross_bars <= 6:
+        reasons.append("近期出现 EMA 金叉")
+    elif ema_cross_type == "dead" and ema_cross_bars is not None and ema_cross_bars <= 6:
+        reasons.append("近期出现 EMA 死叉")
+
+    # MACD
+    if macd_cross_type == "golden":
+        reasons.append("MACD 金叉，多头动能增强")
+    elif macd_cross_type == "dead":
+        reasons.append("MACD 死叉，空头动能增强")
+    elif macd_histogram > 0:
+        reasons.append("MACD 柱线转正，动能改善")
+    elif macd_histogram < 0:
+        reasons.append("MACD 柱线转负，动能减弱")
+
+    # 成交量
+    if vol_ratio >= 2.0:
+        reasons.append(f"成交量激增至均量 {vol_ratio:.1f} 倍")
+    elif vol_ratio >= 1.5:
+        reasons.append(f"成交量放大至均量 {vol_ratio:.1f} 倍")
+
+    # OI
+    if abs(oi_change_pct) > 5:
+        direction_word = "流入" if oi_change_pct > 0 else "流出"
+        reasons.append(f"OI 大幅{direction_word} ({oi_change_pct:+.1f}%)")
+    elif abs(oi_change_pct) > 2:
+        direction_word = "增加" if oi_change_pct > 0 else "减少"
+        reasons.append(f"OI {direction_word} ({oi_change_pct:+.1f}%)")
+
+    # 资金费率
+    if funding_rate < -0.03:
+        reasons.append(f"资金费率极负 ({funding_rate:.3%})，空头拥挤可能轧空")
+    elif funding_rate > 0.03:
+        reasons.append(f"资金费率极高 ({funding_rate:.3%})，多头拥挤注意风险")
+
+    # 关键价位
+    if nearest_resistance and price > 0:
+        dist = (nearest_resistance - price) / price * 100
+        if dist < 2:
+            reasons.append(f"价格接近阻力位 {nearest_resistance} ({dist:.1f}%)")
+    if nearest_support and price > 0:
+        dist = (price - nearest_support) / price * 100
+        if dist < 2:
+            reasons.append(f"价格接近支撑位 {nearest_support} ({dist:.1f}%)")
+
+    return reasons
+
+
+# ══════════════════════════════════════════════════
+# 评分等级映射
+# ══════════════════════════════════════════════════
+
+def _score_to_level(score: int) -> str:
+    if score >= 85:
+        return "强烈关注"
+    elif score >= 70:
+        return "重点关注"
+    elif score >= 55:
+        return "观察"
+    elif score >= 40:
+        return "中性"
+    return "放弃"
+
+
+# ══════════════════════════════════════════════════
+# 主入口
+# ══════════════════════════════════════════════════
+
+def calculate_market_score(inputs: Dict) -> AnalysisResult:
     """
-    便捷函数 - 直接从输入计算市场评分
-    
-    Args:
-        analysis_inputs: 包含所有必需字段的字典
-    
-    Returns:
-        MarketAnalysis 对象
+    v2.1 统一分析入口。
+
+    必需字段：
+        symbol, price, timestamp, candles,
+        ema20, ema60, rsi14,
+        macd_diff, macd_dea, macd_histogram,
+        oi_change_pct, funding_rate,
+        current_vol, avg_vol,
+        atr14 (可选),
+        key_levels (可选), data_source (可选)
+
+    返回：AnalysisResult（可直接序列化为 JSON）
     """
-    price_action = PriceAction(
-        current_price=analysis_inputs.get("price", 0),
-        previous_price=analysis_inputs.get("previous_price")
+    symbol = inputs.get("symbol", "")
+    price = inputs.get("price", 0.0)
+    timestamp = inputs.get("timestamp", "")
+    candles = inputs.get("candles", [])
+    data_source = inputs.get("data_source", "okx")
+
+    # 指标
+    ema20 = inputs.get("ema20")
+    ema60 = inputs.get("ema60")
+    rsi_val = inputs.get("rsi14")
+    macd_diff = inputs.get("macd_diff")
+    macd_dea = inputs.get("macd_dea")
+    macd_histogram = inputs.get("macd_histogram", 0.0) or 0.0
+    oi_change_pct = inputs.get("oi_change_pct", 0.0) or 0.0
+    funding_rate = inputs.get("funding_rate", 0.0) or 0.0
+    current_vol = inputs.get("current_vol") or 0.0
+    avg_vol = inputs.get("avg_vol") or 0.0
+    atr_val = inputs.get("atr14")
+    key_levels = inputs.get("key_levels", [])
+    prev_macd_histogram = inputs.get("prev_macd_histogram")
+
+    # 交叉检测结果
+    ema_cross = inputs.get("ema_cross", {}) or {}
+    macd_cross = inputs.get("macd_cross", {}) or {}
+
+    # ═══ 步骤 1：方向判定 ═══
+    direction = _determine_direction(
+        ema20, ema60, rsi_val,
+        macd_diff, macd_dea,
+        oi_change_pct,
     )
-    
-    result = MarketScorer.score(
-        candles=analysis_inputs.get("candles", []),
-        macd=analysis_inputs.get("macd", {}),
-        ema_data=analysis_inputs.get("ema_data", {}),
-        oi_change_pct=analysis_inputs.get("oi_change_pct", 0),
-        funding_rate=analysis_inputs.get("funding_rate", 0),
-        price_action=price_action,
-        cvd=analysis_inputs.get("cvd", 0),
-        buy_volume=analysis_inputs.get("buy_volume", 0),
-        sell_volume=analysis_inputs.get("sell_volume", 0),
-        volatility=analysis_inputs.get("volatility", 1.5),
-        data_source=analysis_inputs.get("data_source", "OKX_REAL")
+
+    # ═══ 步骤 2：质量评分 ═══
+    trend = _score_trend(
+        direction, ema20 or 0, ema60 or 0, rsi_val or 50,
+        macd_diff or 0, macd_dea or 0, macd_histogram,
+        oi_change_pct, prev_macd_histogram,
     )
-    
-    result.symbol = analysis_inputs.get("symbol", "")
-    return result
+    momentum = _score_momentum(
+        direction, candles, ema20 or price, price,
+        ema_cross.get("cross_type"), ema_cross.get("bars_ago"),
+    )
+    volume = _score_volume(
+        direction, current_vol, avg_vol, candles, price, ema20 or price,
+    )
+    oi = _score_oi(direction, oi_change_pct)
+    funding = _score_funding(direction, funding_rate)
+
+    total_score = trend + momentum + volume + oi + funding
+    total_score = max(0, min(100, total_score))
+    level = _score_to_level(total_score)
+
+    # ═══ 步骤 3：风险评估 ═══
+    nearest_resistance = min([l for l in key_levels if l > price], default=None)
+    nearest_support = max([l for l in key_levels if l < price], default=None)
+
+    risk, risk_factors = _assess_risk(
+        direction, atr_val, price, funding_rate,
+        nearest_resistance, nearest_support,
+    )
+
+    # ═══ 步骤 4：规则解释 ═══
+    vol_ratio = current_vol / avg_vol if avg_vol > 0 else 1.0
+    reasons = _generate_reasons(
+        direction,
+        ema20 or price, ema60 or price,
+        rsi_val or 50,
+        macd_cross.get("cross_type"),
+        macd_histogram,
+        vol_ratio,
+        oi_change_pct,
+        funding_rate,
+        ema_cross.get("cross_type"), ema_cross.get("bars_ago"),
+        price, nearest_resistance, nearest_support,
+    )
+
+    return AnalysisResult(
+        symbol=symbol,
+        price=price,
+        timestamp=timestamp,
+        score=total_score,
+        level=level,
+        direction=direction,
+        risk=risk,
+        risk_factors=risk_factors,
+        components={
+            "trend": trend,
+            "momentum": momentum,
+            "volume": volume,
+            "oi": oi,
+            "funding": funding,
+        },
+        reasons=reasons,
+        indicators={
+            "ema20": ema20,
+            "ema60": ema60,
+            "rsi14": rsi_val,
+            "macd": {"diff": macd_diff, "dea": macd_dea, "histogram": macd_histogram},
+            "atr14": atr_val,
+            "oi_change_pct": oi_change_pct,
+            "funding_rate": funding_rate,
+        },
+        data_source=data_source,
+    )

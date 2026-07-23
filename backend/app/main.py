@@ -19,7 +19,7 @@ else:
     # 开发模式 backend/app/main.py → parents[2] = project_root
     FRONTEND_DIR = _this_file.parents[2] / "frontend"
 
-app = FastAPI(title="OKEworkplace API", version="0.2.0")
+app = FastAPI(title="OKEworkplace API", version="2.1.0")
 
 # ⚡ 彻底推开跨域大门：显式允许所有源、所有方法、所有头部
 app.add_middleware(
@@ -43,7 +43,7 @@ def on_startup() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "version": "0.2.0"}
+    return {"status": "ok", "version": "2.1.0"}
 
 
 @app.get("/")

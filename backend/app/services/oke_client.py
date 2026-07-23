@@ -1,11 +1,73 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
+import os
 import random
 
 import requests
 
 from app.core.config import requests_proxies
+
+
+def _read_windows_proxy_settings():
+    """读取 Windows 系统代理设置（注册表），主流应用的标准做法"""
+    try:
+        import winreg
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
+            if enable:
+                proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
+                if proxy_server:
+                    # 处理带协议前缀的情况
+                    if "://" not in proxy_server:
+                        proxy_server = f"http://{proxy_server}"
+                    return {
+                        "http": proxy_server if "://" in proxy_server else f"http://{proxy_server}",
+                        "https": proxy_server if "://" in proxy_server else f"http://{proxy_server}",
+                    }
+    except Exception:
+        pass
+    return None
+
+
+def _build_proxy_attempts():
+    """
+    主流策略：系统代理（环境变量）→ Windows 注册表代理 → 用户配置代理 → 直连
+    这是国内主流客户端（微信、飞书、各浏览器）的通用做法
+    """
+    attempts = []
+    seen = set()
+
+    # 1. 系统代理（环境变量）- 最优先，用户在系统设置中配置
+    env_http = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+    env_https = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+    if env_http:
+        proxy_cfg = frozenset({"http": env_http, "https": env_https or env_http}.items())
+        if proxy_cfg not in seen:
+            seen.add(proxy_cfg)
+            attempts.append({"http": env_http, "https": env_https or env_http})
+
+    # 2. 注册表读取系统代理（Windows 专属）
+    registry_proxy = _read_windows_proxy_settings()
+    if registry_proxy:
+        proxy_cfg = frozenset(registry_proxy.items())
+        if proxy_cfg not in seen:
+            seen.add(proxy_cfg)
+            attempts.append(registry_proxy)
+
+    # 3. 用户手动配置的代理（.env 文件中的应用内设置）
+    configured = requests_proxies()
+    if configured:
+        proxy_cfg = frozenset(configured.items())
+        if proxy_cfg not in seen:
+            seen.add(proxy_cfg)
+            attempts.append(configured)
+
+    # 4. 直连（最终兜底）
+    attempts.append({})
+
+    return attempts
 
 
 @dataclass
@@ -17,10 +79,7 @@ class OKEClient:
 
     def _request(self, path: str, params: dict) -> dict:
         url = self.base_url.rstrip("/") + path
-        configured = requests_proxies()
-        attempts = [configured] if configured else [{}]
-        if configured:
-            attempts.append({})
+        attempts = _build_proxy_attempts()
 
         last_error = None
         for proxies in attempts:

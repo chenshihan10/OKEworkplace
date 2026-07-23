@@ -1,7 +1,6 @@
-"""分析模型包"""
+"""v2.1 分析模型包"""
 from app.model.market_score import (
-    MarketAnalysis,
-    MarketScorer,
+    AnalysisResult,
     calculate_market_score,
 )
 from app.model.capital_behavior import (
@@ -11,8 +10,7 @@ from app.model.capital_behavior import (
 )
 
 __all__ = [
-    "MarketAnalysis",
-    "MarketScorer",
+    "AnalysisResult",
     "calculate_market_score",
     "CapitalBehavior",
     "CapitalBehaviorAnalyzer",
