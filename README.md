@@ -1,7 +1,8 @@
 # OKEworkplace
-![Uploading image.png…]()
 
-> 加密货币量化分析终端 — 独立桌面应用，不依赖浏览器。
+<img width="2727" height="1342" alt="image" src="https://github.com/user-attachments/assets/94ae4f94-7aa3-445d-8893-6492c1f52f2a" />
+
+> 加密货币量化分析终端 。
 
 [![version](https://img.shields.io/badge/version-2.1.0-blue)](backend/app/main.py)
 [![python](https://img.shields.io/badge/python-3.10+-green)](https://www.python.org/)
