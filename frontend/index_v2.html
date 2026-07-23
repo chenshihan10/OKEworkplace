@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>量化分析终端 - OKEworkplace</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      line-height: 1.5;
+    }
+
+    /* ===== 头部 ===== */
+    header {
+      background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
+      border-bottom: 1px solid #334155;
+      padding: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .header-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      background: linear-gradient(90deg, #3b82f6, #10b981);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .network-status {
+      font-size: 0.85rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 4px;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid #334155;
+    }
+
+    .network-status.real {
+      border-color: #10b981;
+      background: rgba(16, 185, 129, 0.1);
+    }
+
+    .network-status.fallback {
+      border-color: #f59e0b;
+      background: rgba(245, 158, 11, 0.1);
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      font-size: 0.85rem;
+    }
+
+    .updated-time {
+      padding: 0.25rem 0.75rem;
+      background: rgba(59, 130, 246, 0.1);
+      border-radius: 4px;
+      border: 1px solid #3b82f6;
+    }
+
+    /* ===== 主容器 ===== */
+    main {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    /* ===== 标签页 ===== */
+    .tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      border-bottom: 2px solid #334155;
+    }
+
+    .tab {
+      padding: 0.75rem 1.5rem;
+      background: none;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 500;
+      border-bottom: 3px solid transparent;
+      position: relative;
+      bottom: -2px;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      color: #3b82f6;
+      border-bottom-color: #3b82f6;
+    }
+
+    .tab:hover {
+      color: #cbd5e1;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    /* ===== 行情卡片网格 ===== */
+    .market-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .market-card {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 1rem;
+      transition: all 0.3s;
+    }
+
+    .market-card:hover {
+      border-color: #3b82f6;
+      box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
+      transform: translateY(-2px);
+    }
+
+    .market-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid #334155;
+    }
+
+    .symbol {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .alias {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      margin-left: 0.5rem;
+    }
+
+    .source {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 3px;
+      font-weight: 600;
+    }
+
+    .source-real {
+      background: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+      border: 1px solid #10b981;
+    }
+
+    .source-fallback {
+      background: rgba(245, 158, 11, 0.2);
+      color: #f59e0b;
+      border: 1px solid #f59e0b;
+    }
+
+    .market-price-row {
+      margin-bottom: 1rem;
+    }
+
+    .price {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #3b82f6;
+      margin-bottom: 0.5rem;
+    }
+
+    .market-meta {
+      font-size: 0.85rem;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.25rem;
+    }
+
+    .market-meta div {
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+
+    .metric-grid > div {
+      background: rgba(30, 41, 59, 0.5);
+      padding: 0.5rem;
+      border-radius: 4px;
+      border: 1px solid #334155;
+    }
+
+    .metric-grid label {
+      display: block;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      margin-bottom: 0.25rem;
+    }
+
+    .metric-grid strong {
+      font-size: 0.95rem;
+      color: #e2e8f0;
+    }
+
+    /* ===== 评分卡片 ===== */
+    .scores-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .score-card {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 1rem;
+    }
+
+    .score-title {
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+      color: #3b82f6;
+    }
+
+    .score-main {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: #10b981;
+      margin-bottom: 1rem;
+      text-align: center;
+    }
+
+    .score-components {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .component {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .component label {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      font-weight: 600;
+    }
+
+    .bar-container {
+      height: 8px;
+      background: #334155;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .bar-container .score-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #10b981);
+      transition: width 0.3s;
+    }
+
+    .component.risk .score-bar {
+      background: linear-gradient(90deg, #ef4444, #f97316);
+    }
+
+    /* ===== 资金行为卡片 ===== */
+    .behaviors-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .behavior-card {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 1rem;
+    }
+
+    .behavior-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid #334155;
+    }
+
+    .behavior-header strong {
+      color: #3b82f6;
+    }
+
+    .confidence {
+      font-size: 0.75rem;
+      color: #10b981;
+      font-weight: 600;
+    }
+
+    .behavior-type {
+      font-weight: 700;
+      color: #3b82f6;
+      margin-bottom: 0.5rem;
+      font-size: 0.95rem;
+    }
+
+    .behavior-signals {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .signal-tag {
+      display: inline-block;
+      background: rgba(59, 130, 246, 0.2);
+      border: 1px solid #3b82f6;
+      color: #3b82f6;
+      padding: 0.25rem 0.5rem;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .behavior-implications,
+    .behavior-suggestion {
+      font-size: 0.85rem;
+      margin-bottom: 0.5rem;
+      line-height: 1.4;
+    }
+
+    .behavior-implications strong,
+    .behavior-suggestion strong {
+      color: #cbd5e1;
+    }
+
+    /* ===== 信号列表 ===== */
+    .signals-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .signal-item {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid #334155;
+      border-left: 4px solid #94a3b8;
+      border-radius: 6px;
+      padding: 0.75rem;
+    }
+
+    .signal-item.buy {
+      border-left-color: #10b981;
+      background: rgba(16, 185, 129, 0.05);
+    }
+
+    .signal-item.sell {
+      border-left-color: #ef4444;
+      background: rgba(239, 68, 68, 0.05);
+    }
+
+    .signal-item.wait {
+      border-left-color: #f59e0b;
+      background: rgba(245, 158, 11, 0.05);
+    }
+
+    .signal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.5rem;
+      font-weight: 600;
+    }
+
+    .recommendation {
+      font-size: 0.85rem;
+      padding: 0.25rem 0.5rem;
+      background: rgba(59, 130, 246, 0.2);
+      border-radius: 3px;
+    }
+
+    .signal-reason {
+      font-size: 0.8rem;
+      color: #cbd5e1;
+      margin-bottom: 0.5rem;
+      margin-left: 0.5rem;
+    }
+
+    .signal-reason div {
+      margin: 0.25rem 0;
+    }
+
+    .signal-desc {
+      font-size: 0.8rem;
+      color: #94a3b8;
+    }
+
+    /* ===== 订单流网格 ===== */
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .flow-card {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 1rem;
+    }
+
+    .flow-head {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid #334155;
+    }
+
+    .flow-head strong {
+      color: #3b82f6;
+    }
+
+    .positive {
+      color: #10b981;
+      font-weight: 600;
+    }
+
+    .negative {
+      color: #ef4444;
+      font-weight: 600;
+    }
+
+    .flow-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .flow-metrics > div {
+      background: rgba(30, 41, 59, 0.5);
+      padding: 0.5rem;
+      border-radius: 4px;
+      border: 1px solid #334155;
+    }
+
+    .flow-metrics label {
+      display: block;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      margin-bottom: 0.25rem;
+    }
+
+    .flow-metrics strong {
+      display: block;
+      font-size: 0.95rem;
+      color: #e2e8f0;
+    }
+
+    .flow-ratio {
+      font-size: 0.8rem;
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+
+    .judgment {
+      font-weight: 700;
+      color: #3b82f6;
+      text-align: right;
+    }
+
+    /* ===== 监控列表 ===== */
+    .watchlist-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #0f172a;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .watchlist-table thead {
+      background: #1e293b;
+      border-bottom: 2px solid #334155;
+    }
+
+    .watchlist-table th {
+      padding: 0.75rem;
+      text-align: left;
+      font-weight: 700;
+      color: #94a3b8;
+      font-size: 0.85rem;
+    }
+
+    .watchlist-table td {
+      padding: 0.75rem;
+      border-bottom: 1px solid #334155;
+    }
+
+    .watch-row {
+      display: contents;
+    }
+
+    .watchlist-table tbody tr:hover {
+      background: rgba(59, 130, 246, 0.1);
+    }
+
+    .watchlist-table tbody td:first-child {
+      font-weight: 700;
+      color: #3b82f6;
+    }
+
+    .watchlist-table .score {
+      color: #fbbf24;
+      font-weight: 700;
+    }
+    .watchlist-table .del-btn {
+      background: none;
+      border: 1px solid #ef4444;
+      color: #ef4444;
+      padding: 2px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+    }
+    .watchlist-table .del-btn:hover {
+      background: #ef4444;
+      color: #fff;
+    }
+    .add-coin-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 0.8rem;
+      align-items: center;
+    }
+
+    /* ===== 空状态 ===== */
+    .empty {
+      text-align: center;
+      padding: 2rem;
+      color: #94a3b8;
+      font-style: italic;
+    }
+
+    /* ===== 响应式 ===== */
+    @media (max-width: 768px) {
+      .market-grid,
+      .scores-grid,
+      .behaviors-grid,
+      .flow-grid {
+        grid-template-columns: 1fr;
+      }
+
+      main {
+        padding: 1rem;
+      }
+
+      .metric-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* ===== 搜索下拉框 ===== */
+    .coin-search-wrapper {
+      position: relative;
+      flex: 1;
+    }
+    .coin-search-wrapper input {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #334155;
+      border-radius: 4px;
+      background: #1e293b;
+      color: #e2e8f0;
+      outline: none;
+    }
+    .coin-search-wrapper input:focus {
+      border-color: #3b82f6;
+    }
+    .coin-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      max-height: 300px;
+      overflow-y: auto;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 0 0 4px 4px;
+      z-index: 200;
+      display: none;
+    }
+    .coin-dropdown.show {
+      display: block;
+    }
+    .coin-dropdown-item {
+      padding: 6px 10px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+      border-bottom: 1px solid #334155;
+    }
+    .coin-dropdown-item:hover {
+      background: #334155;
+    }
+    .coin-dropdown-item .sym {
+      color: #e2e8f0;
+    }
+    .coin-dropdown-item .price {
+      color: #94a3b8;
+      font-size: 0.8rem;
+    }
+    .coin-dropdown-item .vol {
+      color: #64748b;
+      font-size: 0.75rem;
+    }
+    .coin-dropdown-item.selected {
+      background: #2563eb;
+    }
+    .coin-dropdown-item.selected .sym {
+      color: #fff;
+    }
+    .coin-dropdown-empty {
+      padding: 12px;
+      text-align: center;
+      color: #64748b;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <!-- 头部 -->
+  <header>
+    <div class="header-left">
+      <div class="header-title">⚡ 量化分析终端</div>
+      <div class="network-status" data-network-status title="">🟡 检查连接...</div>
+    </div>
+    <div class="header-right">
+      <div class="updated-time">更新: <span data-updated-at>--</span></div>
+    </div>
+  </header>
+
+  <!-- 主要内容 -->
+  <main>
+    <!-- 标签页导航 -->
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('overview')">概览</button>
+      <button class="tab" onclick="switchTab('scores')">评分分析</button>
+      <button class="tab" onclick="switchTab('behaviors')">资金行为</button>
+      <button class="tab" onclick="switchTab('signals')">交易信号</button>
+      <button class="tab" onclick="switchTab('orderflow')">订单流</button>
+      <button class="tab" onclick="switchTab('watchlist')">监控列表</button>
+    </div>
+
+    <!-- 概览 -->
+    <div id="tab-overview" class="tab-content active">
+      <div class="market-grid" data-market-grid></div>
+    </div>
+
+    <!-- 评分分析 -->
+    <div id="tab-scores" class="tab-content">
+      <div class="scores-grid" data-market-scores></div>
+    </div>
+
+    <!-- 资金行为 -->
+    <div id="tab-behaviors" class="tab-content">
+      <div class="behaviors-grid" data-capital-behaviors></div>
+    </div>
+
+    <!-- 交易信号 -->
+    <div id="tab-signals" class="tab-content">
+      <div style="margin-bottom: 1rem; color: #94a3b8; font-size: 0.9rem;">
+        找到 <span data-signal-count>0</span> 个交易机会
+      </div>
+      <div class="signals-list" data-signals></div>
+    </div>
+
+    <!-- 订单流 -->
+    <div id="tab-orderflow" class="tab-content">
+      <div class="flow-grid" data-flow-grid></div>
+    </div>
+
+    <!-- 监控列表 -->
+    <div id="tab-watchlist" class="tab-content">
+      <div style="margin-bottom: 1rem; color: #94a3b8; font-size: 0.9rem;">
+        监控 <span data-watch-count>0</span>
+      </div>
+
+      <!-- 添加币种表单（可搜索下拉） -->
+      <div class="add-coin-bar">
+        <div class="coin-search-wrapper">
+          <input type="text" id="new-coin-search" placeholder="搜索币种..." autocomplete="off" oninput="filterAvailableCoins(this.value)" onfocus="loadAvailableCoins()">
+          <div id="coin-dropdown" class="coin-dropdown"></div>
+        </div>
+        <button onclick="addCoinFromSearch()" style="padding:6px 16px; background:#2563eb; color:#fff; border:none; border-radius:4px; cursor:pointer;">添加</button>
+      </div>
+
+      <table class="watchlist-table">
+        <thead>
+          <tr>
+            <th>币种</th>
+            <th>周期</th>
+            <th>价格</th>
+            <th>趋势</th>
+            <th>数据源</th>
+            <th>评分</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody data-watchlist></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    // 标签页切换函数
+    function switchTab(tabName) {
+      // 隐藏所有内容
+      document.querySelectorAll(".tab-content").forEach((el) => el.classList.remove("active"));
+      document.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
+
+      // 显示选中的内容
+      const tabContent = document.getElementById(`tab-${tabName}`);
+      if (tabContent) tabContent.classList.add("active");
+
+      // 激活选中的标签
+      event.target.classList.add("active");
+    }
+  </script>
+
+  <script src="src/main_v2.js"></script>
+</body>
+</html>

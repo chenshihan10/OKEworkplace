@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Virtual Environment
+.venv/
+.venv_old/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+backend/.env
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# Backups
+代码备份/
+
+# Docs (keep only essential ones)
+docs/
+CHANGLOG.md
+DATA_OPTIMIZATION.md
+DELIVERY_NOTES.md
+FILES_INDEX.md
+PHASE4_SUMMARY.md
+QUICKSTART.md
+QUICK_REFERENCE.md
+UPGRADE_GUIDE_v0.2.0.md
+build_result.txt.err
+
+# Test artifacts
+build_result.txt.err

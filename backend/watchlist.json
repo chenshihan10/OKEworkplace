@@ -1,0 +1,14 @@
+[
+  {
+    "symbol": "BTC-USDT",
+    "alias": "Bitcoin",
+    "timeframe": "15m",
+    "enabled": true
+  },
+  {
+    "symbol": "ETH-USDT",
+    "alias": "Ethereum",
+    "timeframe": "15m",
+    "enabled": true
+  }
+]
