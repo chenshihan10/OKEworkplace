@@ -4,7 +4,6 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-*.spec
 
 # Virtual Environment
 .venv/
@@ -28,14 +27,7 @@ Thumbs.db
 # Backups
 代码备份/
 
-# Docs (tracked in docs/ folder)
-DELIVERY_NOTES.md
-FILES_INDEX.md
-PHASE4_SUMMARY.md
-QUICKSTART.md
-QUICK_REFERENCE.md
-UPGRADE_GUIDE_v0.2.0.md
-build_result.txt.err
-
-# Test artifacts
+# Build artifacts
+OKEworkplace.exe
+*.spec
 build_result.txt.err

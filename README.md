@@ -43,34 +43,23 @@
 
 ## 快速开始
 
-### 1. 安装依赖
+### 一键启动（推荐）
+
+双击根目录下的 `OKEworkplace.exe`。
+
+### 开发模式
 
 ```bash
 cd backend
+
+# 安装依赖
 pip install -r requirements.txt
-```
 
-### 2. 配置 OKX API
-
-编辑 `backend/.env`：
-```env
-OKE_BASE_URL=https://www.okx.com
-OKE_API_KEY=your_api_key
-OKE_SECRET_KEY=your_secret_key
-```
-
-### 3. 启动
-
-**开发模式**（浏览器访问）：
-```bash
-cd backend
+# 浏览器模式
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 # 打开 http://127.0.0.1:8000/index_v2.html
-```
 
-**独立窗口模式**（推荐）：
-```bash
-cd backend
+# 独立窗口模式
 python entry_exe.py
 ```
 
@@ -78,6 +67,7 @@ python entry_exe.py
 
 ```
 OKEworkplace/
+├── OKEworkplace.exe              # 一键启动（独立窗口，不依赖浏览器）
 ├── README.md
 ├── docs/
 │   ├── V2.1_方案设计文档.md       # v2.1 设计规格
