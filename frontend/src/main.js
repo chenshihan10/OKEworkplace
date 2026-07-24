@@ -6,9 +6,10 @@ import { updateAnalysis, getAllAnalysis } from './stores/analysisStore.js';
 import { updateNetwork, setOffline, eventBus } from './stores/systemStore.js';
 import { renderMarketCards } from './render/MarketCard.js';
 import { renderMarketScores } from './render/ScoreCard.js';
-import { renderCapitalBehaviors } from './render/CapitalCard.js';
 import { renderSignals } from './render/SignalCard.js';
 import { renderWatchlist } from './render/WatchlistCard.js';
+import { initOrderCard, renderOrders } from './render/OrderCard.js';
+import { refreshOrders } from './stores/orderStore.js';
 import { initTabs } from './views/tabManager.js';
 
 const CONFIG = {
@@ -42,6 +43,9 @@ async function refresh() {
       updateSnapshot(snapshot);
       renderSnapshot(snapshot);
     }
+
+    // 订单刷新（独立轮询，不阻塞行情渲染）
+    refreshOrders().then(renderOrders).catch(() => {});
 
     const now = Date.now();
     if (now - globalData.lastAnalysisUpdate > CONFIG.analysisInterval) {
@@ -85,9 +89,7 @@ function renderSnapshot(data) {
 
   renderMarketCards(items, prices, signals);
   renderMarketScores(items);
-  renderCapitalBehaviors(items);
   renderSignals(signals);
-  renderOrderFlow(signals);
   renderWatchlist(items, prices, signals);
 }
 
@@ -104,55 +106,6 @@ function renderNetwork(data) {
   target.classList.toggle('real', isReal);
   target.classList.toggle('fallback', !isReal);
   target.title = data.proxy_enabled ? `代理: ${data.proxy}` : labels.proxyDisabled;
-}
-
-function renderOrderFlow(signalsBySymbol) {
-  const target = document.querySelector('[data-flow-grid]');
-  if (!target) return;
-
-  const signals = Object.values(signalsBySymbol || {});
-  if (!signals.length) {
-    target.innerHTML = '<div class="empty">暂无订单流</div>';
-    return;
-  }
-
-  target.innerHTML = signals.map((signal) => {
-    const trades = signal.trades || [];
-    const buyVolume = trades.filter(x => x.side === 'buy').reduce((sum, x) => sum + Number(x.size || 0), 0);
-    const sellVolume = trades.filter(x => x.side === 'sell').reduce((sum, x) => sum + Number(x.size || 0), 0);
-    const cvd = signal.cvd || 0;
-    const totalVol = buyVolume + sellVolume;
-    const buyRatio = totalVol > 0 ? (buyVolume / totalVol) * 100 : 50;
-    
-    const asks = signal.books?.asks || [];
-    const bids = signal.books?.bids || [];
-    const topAsk = asks[0] ? `${asks[0][0]} / ${fmtNumber(asks[0][1], 2)}` : '-';
-    const topBid = bids[0] ? `${bids[0][0]} / ${fmtNumber(bids[0][1], 2)}` : '-';
-
-    let flowJudgment = '均衡';
-    if (buyRatio > 65) flowJudgment = '买方占优';
-    else if (buyRatio < 35) flowJudgment = '卖方占优';
-
-    return `
-      <div class="flow-card">
-        <div class="flow-head">
-          <strong>${signal.symbol}</strong>
-          <span class="${cvd >= 0 ? 'positive' : 'negative'}">CVD ${fmtNumber(cvd, 2)}</span>
-        </div>
-        <div class="flow-metrics">
-          <div><label>买入量</label><strong>${fmtNumber(buyVolume, 2)}</strong></div>
-          <div><label>卖出量</label><strong>${fmtNumber(sellVolume, 2)}</strong></div>
-          <div><label>最优卖价</label><strong>${topAsk}</strong></div>
-          <div><label>最优买价</label><strong>${topBid}</strong></div>
-        </div>
-        <div class="flow-ratio">
-          <div>主动买: ${buyRatio.toFixed(1)}%</div>
-          <div>主动卖: ${(100 - buyRatio).toFixed(1)}%</div>
-          <div class="judgment">${flowJudgment}</div>
-        </div>
-      </div>
-    `;
-  }).join('');
 }
 
 function renderOffline(error) {
@@ -178,17 +131,84 @@ document.addEventListener("click", function(e) {
   }
 });
 
-// 辅助：fmtNumber（导入或本地）
-function fmtNumber(value, digits = 2) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
-  return Number(value).toLocaleString(undefined, {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
+// ============================================================
+// 开单模态框（全局函数，供 onclick 调用）
+// ============================================================
+let _modalDirection = 'LONG';
+
+window.__openOrderModal = function(symbol, price) {
+  document.getElementById('modal-symbol').value = symbol;
+  document.getElementById('modal-price').value = price || 0;
+  document.getElementById('modal-quantity').value = '';
+  document.getElementById('modal-note').value = '';
+  _modalDirection = 'LONG';
+  _updateModalDirectionBtn();
+  document.getElementById('order-modal').style.display = 'flex';
+};
+
+function closeOrderModal() {
+  document.getElementById('order-modal').style.display = 'none';
+}
+window.closeOrderModal = closeOrderModal;
+
+function _updateModalDirectionBtn() {
+  const longBtn = document.getElementById('modal-direction-long');
+  const shortBtn = document.getElementById('modal-direction-short');
+  if (_modalDirection === 'LONG') {
+    longBtn.style.background = '#22c55e';
+    longBtn.style.color = '#fff';
+    shortBtn.style.background = '#334155';
+    shortBtn.style.color = '#94a3b8';
+  } else {
+    shortBtn.style.background = '#ef4444';
+    shortBtn.style.color = '#fff';
+    longBtn.style.background = '#334155';
+    longBtn.style.color = '#94a3b8';
+  }
+}
+
+document.addEventListener('click', function(e) {
+  if (e.target.id === 'modal-direction-long') {
+    _modalDirection = 'LONG';
+    _updateModalDirectionBtn();
+  } else if (e.target.id === 'modal-direction-short') {
+    _modalDirection = 'SHORT';
+    _updateModalDirectionBtn();
+  } else if (e.target.id === 'modal-confirm') {
+    _submitOrder();
+  }
+});
+
+async function _submitOrder() {
+  const symbol = document.getElementById('modal-symbol').value;
+  const price = parseFloat(document.getElementById('modal-price').value);
+  const quantity = parseFloat(document.getElementById('modal-quantity').value) || 0;
+  const note = document.getElementById('modal-note').value;
+
+  if (!symbol || !price || price <= 0) {
+    alert('请输入有效的价格');
+    return;
+  }
+
+  try {
+    const { createOrder } = await import('./stores/orderStore.js');
+    await createOrder(symbol, _modalDirection, price, quantity, note);
+    closeOrderModal();
+    // 通知订单模块刷新
+    const { refreshOrders } = await import('./stores/orderStore.js');
+    const { renderOrders } = await import('./render/OrderCard.js');
+    await refreshOrders();
+    renderOrders();
+  } catch (e) {
+    alert(`开单失败: ${e.message}`);
+  }
 }
 
 // 初始化
 function init() {
+  // 初始化订单模块
+  initOrderCard();
+  
   // 初始化标签页
   initTabs();
   

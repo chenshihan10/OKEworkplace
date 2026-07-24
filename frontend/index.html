@@ -687,9 +687,8 @@
     <div class="tabs">
       <button class="tab active" data-tab="overview">概览</button>
       <button class="tab" data-tab="scores">评分分析</button>
-      <button class="tab" data-tab="behaviors">资金行为</button>
       <button class="tab" data-tab="signals">交易信号</button>
-      <button class="tab" data-tab="orderflow">订单流</button>
+      <button class="tab" data-tab="orderflow">订单</button>
       <button class="tab" data-tab="watchlist">监控列表</button>
     </div>
 
@@ -703,11 +702,6 @@
       <div class="scores-grid" data-market-scores></div>
     </div>
 
-    <!-- 资金行为 -->
-    <div id="tab-behaviors" class="tab-content">
-      <div class="behaviors-grid" data-capital-behaviors></div>
-    </div>
-
     <!-- 交易信号 -->
     <div id="tab-signals" class="tab-content">
       <div style="margin-bottom: 1rem; color: #94a3b8; font-size: 0.9rem;">
@@ -716,9 +710,9 @@
       <div class="signals-list" data-signals></div>
     </div>
 
-    <!-- 订单流 -->
+    <!-- 订单 -->
     <div id="tab-orderflow" class="tab-content">
-      <div class="flow-grid" data-flow-grid></div>
+      <div class="orders-grid" data-orders-grid></div>
     </div>
 
     <!-- 监控列表 -->
@@ -752,6 +746,40 @@
       </table>
     </div>
   </main>
+
+  <!-- 开单模态框 -->
+  <div id="order-modal" class="modal-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:1000;justify-content:center;align-items:center;">
+    <div class="modal-content" style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:24px;width:360px;max-width:90vw;">
+      <h3 style="margin:0 0 16px;color:#f1f5f9;">📝 开单</h3>
+      <div class="modal-field" style="margin-bottom:12px;">
+        <label style="display:block;color:#94a3b8;font-size:0.85rem;margin-bottom:4px;">币种</label>
+        <input id="modal-symbol" type="text" readonly style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:0.9rem;">
+      </div>
+      <div class="modal-field" style="margin-bottom:12px;">
+        <label style="display:block;color:#94a3b8;font-size:0.85rem;margin-bottom:4px;">方向</label>
+        <div style="display:flex;gap:8px;">
+          <button id="modal-direction-long" class="dir-btn active" style="flex:1;padding:8px;background:#22c55e;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:bold;">多头 LONG</button>
+          <button id="modal-direction-short" class="dir-btn" style="flex:1;padding:8px;background:#334155;color:#94a3b8;border:none;border-radius:6px;cursor:pointer;">空头 SHORT</button>
+        </div>
+      </div>
+      <div class="modal-field" style="margin-bottom:12px;">
+        <label style="display:block;color:#94a3b8;font-size:0.85rem;margin-bottom:4px;">价格</label>
+        <input id="modal-price" type="number" step="0.001" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:0.9rem;">
+      </div>
+      <div class="modal-field" style="margin-bottom:12px;">
+        <label style="display:block;color:#94a3b8;font-size:0.85rem;margin-bottom:4px;">数量（选填）</label>
+        <input id="modal-quantity" type="number" step="0.001" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:0.9rem;">
+      </div>
+      <div class="modal-field" style="margin-bottom:16px;">
+        <label style="display:block;color:#94a3b8;font-size:0.85rem;margin-bottom:4px;">备注（选填）</label>
+        <input id="modal-note" type="text" maxlength="200" style="width:100%;padding:8px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:0.9rem;">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button onclick="closeOrderModal()" style="padding:8px 20px;background:#334155;color:#94a3b8;border:none;border-radius:6px;cursor:pointer;">取消</button>
+        <button id="modal-confirm" style="padding:8px 20px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:bold;">✓ 确认开单</button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="src/main.js"></script>
 </body>

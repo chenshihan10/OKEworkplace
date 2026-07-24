@@ -31,8 +31,16 @@ export const labels = {
 };
 
 // ============ 格式化函数 ============
-export function fmtNumber(value, digits = 2) {
+export function fmtNumber(value, digits) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  // 自适应小数位：未显式指定时根据价格量级自动调整
+  if (digits === undefined) {
+    const abs = Math.abs(Number(value));
+    if (abs >= 1000) digits = 2;
+    else if (abs >= 1) digits = 4;
+    else if (abs >= 0.01) digits = 6;
+    else digits = 8;
+  }
   return Number(value).toLocaleString(undefined, {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,

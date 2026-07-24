@@ -21,7 +21,8 @@ export function renderWatchlist(items, prices, signals) {
         <td>${analysis.direction || "-"}</td>
         <td>${(ticker.source || "-").toUpperCase()}</td>
         <td class="score">${analysis.score || "-"}</td>
-        <td><button class="del-btn" onclick="removeCoin('${item.symbol}')">删除</button></td>
+        <td><button class="del-btn" onclick="removeCoin('${item.symbol}')">删除</button>
+            <button class="order-btn" onclick="window.__openOrderModal('${item.symbol}', ${ticker.price || 0})" style="margin-left:4px;padding:4px 8px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem;">📝 开单</button></td>
       </tr>
     `;
   }).join("");
