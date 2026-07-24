@@ -23,6 +23,13 @@ class Settings(BaseModel):
     rsi_enabled: bool = Field(default=False)
     data_storage_strategy: str = Field(default="memory")  # memory | aggregated | persistent
     keep_history_records: int = Field(default=100)  # 保留最近 N 条数据记录
+    # v2.2：方向抖动控制参数
+    signal_buffer_size: int = Field(default=12)
+    signal_hysteresis_low: int = Field(default=35)
+    signal_hysteresis_high: int = Field(default=55)
+    signal_confirm_count: int = Field(default=3)
+    signal_flip_count: int = Field(default=4)
+    signal_cooldown_minutes_v2: int = Field(default=5)
 
 
 def build_settings() -> Settings:
@@ -40,6 +47,13 @@ def build_settings() -> Settings:
         rsi_enabled=os.getenv("RSI_ENABLED", "false").lower() == "true",
         data_storage_strategy=os.getenv("DATA_STORAGE_STRATEGY", "memory"),
         keep_history_records=int(os.getenv("KEEP_HISTORY_RECORDS", "100")),
+        # v2.2 方向抖动控制
+        signal_buffer_size=int(os.getenv("SIGNAL_BUFFER_SIZE", "12")),
+        signal_hysteresis_low=int(os.getenv("SIGNAL_HYSTERESIS_LOW", "35")),
+        signal_hysteresis_high=int(os.getenv("SIGNAL_HYSTERESIS_HIGH", "55")),
+        signal_confirm_count=int(os.getenv("SIGNAL_CONFIRM_COUNT", "3")),
+        signal_flip_count=int(os.getenv("SIGNAL_FLIP_COUNT", "4")),
+        signal_cooldown_minutes_v2=int(os.getenv("SIGNAL_COOLDOWN_MINUTES", "5")),
     )
 
 

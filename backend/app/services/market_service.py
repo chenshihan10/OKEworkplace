@@ -9,6 +9,9 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.services.alert_store import AlertStore
+from app.services.direction_tracker import DirectionTracker
+from app.services.event_bus import event_bus
+from app.services.db_store import SignalDB
 from app.models import WatchItem
 from app.services.oke_client import OKEClient
 from app.services.signal_engine import signal_engine
@@ -70,7 +73,9 @@ class MarketService:
         self._latest_signals_cache = {}
         self._prev_cvd = {}
         self._prev_oi = {}  # v2.1：记录上次 OI 值用于计算变化百分比
+        self._trackers: dict[str, DirectionTracker] = {}  # v2.2：每个币种一个方向跟踪器
         self._alerts = AlertStore(settings.signal_cooldown_minutes)
+        self._db = SignalDB()  # v2.2：SQLite 持久化
         self._client = OKEClient(settings.oke_base_url, settings.oke_api_key, settings.oke_secret_key)
         self._executor = ThreadPoolExecutor(max_workers=10)
 
@@ -109,6 +114,8 @@ class MarketService:
         candles = self._client.fetch_candles(item.symbol, item.timeframe)
         open_interest = self._client.fetch_open_interest(item.symbol)
         funding_rate = self._client.fetch_funding_rate(item.symbol)
+        mark_price = self._client.fetch_mark_price(item.symbol)
+        index_price = self._client.fetch_index_price(item.symbol)
         trades = self._client.fetch_trades(item.symbol)
         books = self._client.fetch_books(item.symbol)
 
@@ -145,9 +152,45 @@ class MarketService:
         # 向后兼容：funding_rate dict 格式（analysis.py 旧代码依赖）
         signal["funding_rate_dict"] = funding_rate or {}
 
+        # v2.2：方向抖动控制 — 三层过滤
+        if item.symbol not in self._trackers:
+            self._trackers[item.symbol] = DirectionTracker(item.symbol)
+        tracker = self._trackers[item.symbol]
+        raw_dir = analysis.direction
+        raw_score = analysis.score if analysis.score is not None else 0
+        stabilized = tracker.feed(raw_dir, raw_score)
+        # 更新分析结果为稳定方向
+        signal["raw_direction"] = raw_dir  # 保留原始方向供诊断
+        analysis.direction = stabilized["direction"]
+        # 评分也使用稳定后的分数（实际未改变，保持与原始评分一致）
+        # 但标记是否发生过方向变更
+        signal["direction_changed"] = stabilized["should_notify"]
+
+        # v2.2：标记价格 / 指数价格
+        mark_px = mark_price.get("mark_price", 0) or 0
+        idx_px = index_price.get("index_price", 0) or 0
+        signal["mark_price"] = mark_px
+        signal["index_price"] = idx_px
+        signal["mark_index_spread"] = round(mark_px - idx_px, 2) if idx_px else 0
+        signal["mark_index_spread_pct"] = round((mark_px - idx_px) / idx_px * 100, 4) if idx_px else 0
+
         self._latest_prices[item.symbol] = ticker
         self._latest_signals_cache[item.symbol] = signal
         self._prev_cvd[item.symbol] = cvd
+
+        # v2.2：保存信号到 SQLite
+        try:
+            self._db.save_signal(item.symbol, signal)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to save signal to DB: %s", e)
+
+        # v2.2：Event Bus 发布事件
+        try:
+            event_bus.publish("signal:updated", {"symbol": item.symbol, "signal": signal})
+            event_bus.publish("price:updated", {"symbol": item.symbol, "price": ticker})
+        except Exception:
+            pass
 
         self._maybe_emit_alert(item.symbol, signal, ticker)
 
@@ -195,7 +238,7 @@ class MarketService:
         return result
 
     def _maybe_emit_alert(self, symbol: str, signal: dict, ticker: dict) -> None:
-        """v2.1 告警：基于 direction + score 触发"""
+        """v2.2 告警：使用 5 分档去重键 + 2 分钟冷却期"""
         price = ticker["price"]
         analysis = signal.get("analysis")
         if not analysis:
@@ -208,8 +251,8 @@ class MarketService:
         if direction == "NEUTRAL" or score < 60:
             return
 
-        # 告警去重键
-        key = f"{symbol}:{direction}:{level}:{round(price, 2)}"
+        # v2.2：使用 5 分档去重键（替代 v2.1 的价格级去重）
+        key = AlertStore.make_key(symbol, direction, score)
         if not self._alerts.should_emit(key):
             return
 
@@ -226,6 +269,14 @@ class MarketService:
             "timestamp": analysis.timestamp,
         }
         self._alerts.add(alert)
+
+        # v2.2：保存分析快照到 SQLite
+        try:
+            components = analysis.components or {}
+            self._db.save_analysis_snapshot(symbol, components)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to save analysis snapshot: %s", e)
 
 
 market_service = MarketService()

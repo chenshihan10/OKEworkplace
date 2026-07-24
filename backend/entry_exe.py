@@ -1,4 +1,4 @@
-"""PyInstaller EXE entry point - starts server and opens GUI window"""
+"""PyInstaller EXE entry point - starts server and opens GUI window with tray icon"""
 import sys
 import os
 import io
@@ -91,23 +91,91 @@ def _start_server(port):
 
 def _confirm_exit():
     """
-    关闭确认对话框 - 主流应用的标准交互
-    参考：VS Code、微信、各种专业软件都有此功能
-    返回值：True = 退出, False = 取消
+    关闭确认对话框 - v2.2 三选项
+    [是] 直接退出 | [否] 最小化到托盘 | [取消] 继续使用
+    返回值：0=退出, 1=最小化到托盘, -1=取消
     """
+    import ctypes
     result = ctypes.windll.user32.MessageBoxW(
         0,
-        "确定要退出 OKEworkplace 吗？\n\n[是] 直接退出程序\n[否] 取消",
+        "确定要退出 OKEworkplace 吗？\n\n"
+        "[是] 直接退出程序\n"
+        "[否] 最小化到系统托盘\n"
+        "[取消] 继续使用",
         "退出确认",
-        0x00000004 | 0x00000040,  # MB_YESNO | MB_ICONINFORMATION
+        0x00000003 | 0x00000040,  # MB_YESNOCANCEL | MB_ICONINFORMATION
     )
-    return result == 6  # IDYES = 6
+    # IDYES=6, IDNO=7, IDCANCEL=2
+    if result == 6:
+        return 0   # 退出
+    elif result == 7:
+        return 1   # 最小化到托盘
+    return -1       # 取消
+
+
+def _start_tray_icon(window_ref):
+    """
+    v2.2 pystray 系统托盘 - 独立线程运行
+    window_ref: pywebview window 对象的弱引用容器 [window]
+    """
+    try:
+        import pystray
+        from PIL import Image, ImageDraw
+
+        # 创建 64x64 图标
+        icon_img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(icon_img)
+        draw.ellipse([4, 4, 60, 60], fill="#3b82f6")
+        draw.text((16, 14), "OK", fill="white")
+
+        def on_show(icon, item):
+            w = window_ref[0]
+            if w:
+                w.show()
+                # 使用 webview 的 native API 恢复窗口
+                try:
+                    import webview
+                    if hasattr(w, 'restore'):
+                        w.restore()
+                except Exception:
+                    pass
+
+        def on_exit(icon, item):
+            icon.stop()
+            from app.shutdown import shutdown_event
+            shutdown_event.set()
+
+        menu = pystray.Menu(
+            pystray.MenuItem("显示窗口", on_show, default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("退出程序", on_exit),
+        )
+
+        icon = pystray.Icon("OKEworkplace", icon_img, "OKEworkplace - 交易分析终端", menu)
+        icon.run()
+    except ImportError:
+        pass  # 无 pystray 时静默跳过
 
 
 def _open_gui_window(port):
-    """用 pywebview 创建独立窗口，失败则回退到浏览器"""
+    """用 pywebview 创建独立窗口（支持最小化到系统托盘）"""
     try:
         import webview
+
+        # 避免循环导入：用 list wrapper 存储 window 引用
+        window_ref = [None]
+
+        def on_closing():
+            """窗口关闭前回调 - 显示三选项对话框"""
+            choice = _confirm_exit()
+            if choice == 0:         # 退出
+                return True
+            elif choice == 1:       # 最小化到托盘
+                w = window_ref[0]
+                if w:
+                    w.hide()
+                return False        # 阻止关闭
+            return False            # 取消 - 阻止关闭
 
         window = webview.create_window(
             title="OKEworkplace - 交易分析终端",
@@ -117,17 +185,25 @@ def _open_gui_window(port):
             min_size=(960, 600),
             resizable=True,
             text_select=True,
-            confirm_close=True,  # pywebview 原生关闭确认对话框
+            confirm_close=False,  # v2.2：使用自定义关闭对话框
         )
+        window_ref[0] = window
+
+        # v2.2：启动系统托盘（后台线程）
+        tray_thread = threading.Thread(
+            target=_start_tray_icon, args=(window_ref,), daemon=True
+        )
+        tray_thread.start()
 
         def on_window_closed():
-            """窗口关闭后的回调 - 触发优雅关闭"""
+            """窗口关闭后的回调"""
             from app.shutdown import shutdown_event
             shutdown_event.set()
 
+        # 拦截 closing 事件
+        window.events.closing += on_closing
         window.events.closed += on_window_closed
 
-        # webview.start() 启动 GUI 事件循环并显示窗口，阻塞直到窗口被关闭
         webview.start()
         # 窗口关闭 → 触发关闭信号
         from app.shutdown import shutdown_event

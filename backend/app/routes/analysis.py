@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.services.market_service import market_service
+from app.services.db_store import SignalDB
 from app.model import analyze_capital_behavior
+from app.services.decision_engine import build_decision_trace, compute_confidence, detect_trend_phase
 
 router = APIRouter()
 
@@ -189,12 +191,23 @@ def get_market_analysis(symbol: str):
 
         recommendation = _generate_recommendation(analysis, capital_behavior)
 
+        # v2.2：Decision Trace + Confidence
+        inputs_for_trace = signal  # signal dict 自带 ema20, ema60, rsi14, candles, etc.
+        decision_trace = build_decision_trace(symbol, analysis, inputs_for_trace)
+        confidence = compute_confidence(analysis, decision_trace)
+
         return {
             "symbol": symbol,
             "price": analysis.price,
             "score": analysis.score,
             "level": analysis.level,
             "direction": analysis.direction,
+            "raw_direction": signal.get("raw_direction"),        # v2.2：原始方向（过滤前）
+            "direction_changed": signal.get("direction_changed", False),  # v2.2：是否发生了方向变更
+            "mark_price": signal.get("mark_price", 0),
+            "index_price": signal.get("index_price", 0),
+            "mark_index_spread": signal.get("mark_index_spread", 0),
+            "mark_index_spread_pct": signal.get("mark_index_spread_pct", 0),
             "risk": analysis.risk,
             "risk_factors": analysis.risk_factors,
             "components": analysis.components,
@@ -202,11 +215,34 @@ def get_market_analysis(symbol: str):
             "indicators": analysis.indicators,
             "capital_behavior": capital_behavior,
             "recommendation": recommendation,
+            "decision_trace": {
+                "items": [vars(item) for item in decision_trace.items],
+                "summary": decision_trace.summary,
+            },
+            "confidence": confidence,
+            "trend_phase": decision_trace.trend_phase,  # v2.2：趋势阶段
             "data_source": analysis.data_source,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     except HTTPException as he:
         raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/signals/history/{symbol}")
+def get_signal_history(symbol: str, limit: int = 50):
+    """v2.2 获取信号历史"""
+    try:
+        db = SignalDB()
+        signals = db.get_recent_signals(symbol, limit=limit)
+        stats = db.get_signal_stats(symbol)
+        return {
+            "symbol": symbol,
+            "total": len(signals),
+            "signals": signals,
+            "stats": stats,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

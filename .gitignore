@@ -27,8 +27,16 @@ Thumbs.db
 # Backups
 代码备份/
 
+# User data
+backend/data/
+*.docx
+
 # Build artifacts
 OKEworkplace.exe
+OKEworkplace_v2.2/
+OKEworkplace_v2.2.exe
 _internal/
 *.spec
 build_result.txt.err
+backend/dist/
+backend/build/

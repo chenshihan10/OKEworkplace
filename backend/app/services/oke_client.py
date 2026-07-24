@@ -310,5 +310,39 @@ class OKEClient:
         except Exception:
             return {"symbol": symbol, "instId": inst_id, "asks": [], "bids": [], "timestamp": datetime.now(timezone.utc).isoformat(), "source": "fallback"}
 
+    def fetch_mark_price(self, symbol: str) -> dict:
+        """获取标记价格 (mark price)"""
+        url = f"{self.base_url}/api/v5/public/mark-price?instId={symbol}"
+        for proxies in _build_proxy_attempts():
+            try:
+                resp = requests.get(url, proxies=proxies, timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("code") == "0" and data.get("data"):
+                        item = data["data"][0]
+                        mark_px = float(item.get("markPx", 0) or 0)
+                        ts = item.get("ts", "")
+                        return {"mark_price": mark_px, "timestamp": ts}
+            except Exception:
+                continue
+        return {"mark_price": 0, "timestamp": ""}
+
+    def fetch_index_price(self, symbol: str) -> dict:
+        """获取指数价格 (index price)"""
+        url = f"{self.base_url}/api/v5/public/index-price?instId={symbol}"
+        for proxies in _build_proxy_attempts():
+            try:
+                resp = requests.get(url, proxies=proxies, timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("code") == "0" and data.get("data"):
+                        item = data["data"][0]
+                        idx_px = float(item.get("idxPx", 0) or 0)
+                        ts = item.get("ts", "")
+                        return {"index_price": idx_px, "timestamp": ts}
+            except Exception:
+                continue
+        return {"index_price": 0, "timestamp": ""}
+
     def _symbol_to_inst_id(self, symbol: str) -> str:
         return symbol.replace("-", "-") + "-SWAP" if not symbol.endswith("-SWAP") else symbol

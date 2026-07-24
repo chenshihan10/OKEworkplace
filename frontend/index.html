@@ -685,12 +685,12 @@
   <main>
     <!-- 标签页导航 -->
     <div class="tabs">
-      <button class="tab active" onclick="switchTab('overview')">概览</button>
-      <button class="tab" onclick="switchTab('scores')">评分分析</button>
-      <button class="tab" onclick="switchTab('behaviors')">资金行为</button>
-      <button class="tab" onclick="switchTab('signals')">交易信号</button>
-      <button class="tab" onclick="switchTab('orderflow')">订单流</button>
-      <button class="tab" onclick="switchTab('watchlist')">监控列表</button>
+      <button class="tab active" data-tab="overview">概览</button>
+      <button class="tab" data-tab="scores">评分分析</button>
+      <button class="tab" data-tab="behaviors">资金行为</button>
+      <button class="tab" data-tab="signals">交易信号</button>
+      <button class="tab" data-tab="orderflow">订单流</button>
+      <button class="tab" data-tab="watchlist">监控列表</button>
     </div>
 
     <!-- 概览 -->
@@ -753,22 +753,6 @@
     </div>
   </main>
 
-  <script>
-    // 标签页切换函数
-    function switchTab(tabName) {
-      // 隐藏所有内容
-      document.querySelectorAll(".tab-content").forEach((el) => el.classList.remove("active"));
-      document.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
-
-      // 显示选中的内容
-      const tabContent = document.getElementById(`tab-${tabName}`);
-      if (tabContent) tabContent.classList.add("active");
-
-      // 激活选中的标签
-      event.target.classList.add("active");
-    }
-  </script>
-
-  <script src="src/main.js"></script>
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>
