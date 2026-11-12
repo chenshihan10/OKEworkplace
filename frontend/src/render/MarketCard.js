@@ -59,6 +59,13 @@ export function renderMarketCards(items, prices, signals) {
           <span>指数价: <strong>${fmtNumber(analysis.index_price)}</strong></span>
           <span>价差: <strong>${fmtNumber(analysis.mark_index_spread)}</strong></span>
         </div>
+        <!-- v2.3：开单按钮 -->
+        <div style="margin-top:10px;text-align:right;border-top:1px solid #1e293b;padding-top:8px;">
+          <button onclick="window.__openOrderModal('${item.symbol}', ${ticker.price || 0})"
+                  style="padding:6px 16px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.85rem;font-weight:600;">
+            📝 开单
+          </button>
+        </div>
       </article>
     `;
   }).join("");

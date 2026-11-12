@@ -29,7 +29,7 @@ export function renderOrders() {
     </div>`;
 
   if (orders.length === 0) {
-    html += `<div style="color:#64748b;text-align:center;padding:40px;">暂无持仓订单。在监控列表中点击 <strong>[📝 开单]</strong> 记录你的交易。</div>`;
+    html += `<div style="color:#64748b;text-align:center;padding:40px;">暂无持仓订单。在概览页点击 <strong>[📝 开单]</strong> 记录你的交易。</div>`;
   } else {
     for (const order of orders) {
       const currentPrice = prices[order.symbol]?.price || 0;

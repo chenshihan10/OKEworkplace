@@ -1,12 +1,15 @@
+import os
+import signal
 import sys
+import threading
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.core.scheduler import start_scheduler
+from app.core.scheduler import start_scheduler, stop_scheduler
 from app.routes import coins, monitor, network, analysis, orders
 from app.shutdown import shutdown_event
 
@@ -19,7 +22,11 @@ else:
     # 开发模式 backend/app/main.py → parents[2] = project_root
     FRONTEND_DIR = _this_file.parents[2] / "frontend"
 
-app = FastAPI(title="OKEworkplace API", version="2.3.0")
+APP_VERSION = "2.3.0.0"
+# 正式部署（Web）时通过环境变量关闭进程自杀接口，避免服务被任意访问者关停
+ENABLE_SHUTDOWN = os.getenv("OKE_ENABLE_SHUTDOWN", "true").lower() == "true"
+
+app = FastAPI(title="OKEworkplace API", version=APP_VERSION)
 
 # ⚡ 彻底推开跨域大门：显式允许所有源、所有方法、所有头部
 app.add_middleware(
@@ -44,7 +51,7 @@ def on_startup() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "version": "2.3.0"}
+    return {"status": "ok", "version": APP_VERSION}
 
 
 @app.get("/")
@@ -55,7 +62,13 @@ def root():
 @app.post("/api/shutdown")
 def shutdown():
     """前端关闭窗口时调用，通知后端停止"""
+    if not ENABLE_SHUTDOWN:
+        raise HTTPException(status_code=403, detail="shutdown endpoint disabled")
     shutdown_event.set()
+    stop_scheduler()
+    # 延迟 0.5 秒后通过 SIGINT 触发 uvicorn 优雅关闭
+    # 确保当前 HTTP 响应先成功返回给客户端
+    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGINT)).start()
     return {"status": "shutting_down"}
 
 

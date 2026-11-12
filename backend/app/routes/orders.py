@@ -1,6 +1,8 @@
 """V2.3 订单管理 + 价格触及检测 API"""
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -21,12 +23,12 @@ class CreateOrderRequest(BaseModel):
 
 class CloseOrderRequest(BaseModel):
     close_price: float = Field(..., gt=0)
-    quantity: float | None = Field(None, ge=0)
+    quantity: Optional[float] = Field(None, ge=0)
 
 
 class PriceLevelCheckRequest(BaseModel):
-    symbol: str | None = Field(None)
-    current_price: float | None = Field(None, gt=0)
+    symbol: Optional[str] = Field(None)
+    current_price: Optional[float] = Field(None, gt=0)
 
 
 # ─── 订单 CRUD ─────────────────────────────────────────────
@@ -47,7 +49,7 @@ def create_order(body: CreateOrderRequest):
 
 
 @router.get("/orders", summary="当前持仓列表")
-def list_open_orders(symbol: str | None = None):
+def list_open_orders(symbol: Optional[str] = None):
     orders = order_mgr.get_open_orders(symbol)
     return {"total": len(orders), "orders": orders}
 
@@ -77,7 +79,7 @@ def order_summary():
 
 
 @router.get("/price-levels/check", summary="价格触及检测")
-def check_price_levels(symbol: str | None = None, current_price: float | None = None):
+def check_price_levels(symbol: Optional[str] = None, current_price: Optional[float] = None):
     """检测当前价格是否接近某个开单价。
     
     如果未提供 current_price，尝试从全局缓存获取最新价格。

@@ -1,0 +1,38 @@
+# OKEworkplace —— Render Blueprint
+# 用法：Render 控制台 → New → Blueprint → 选择本仓库，即可按此文件自动创建 Web Service。
+#
+# 说明：
+# 1. FastAPI 自身托管 frontend 静态资源，因此只需要一个 Web Service，无需单独部署前端。
+# 2. 数据持久化提示：SQLite（backend/data/signals.db、user_trades.db）与
+#    backend/watchlist.json 写在代码目录下，Render 默认磁盘是临时的，
+#    重新部署或实例重启会丢失这些数据。如需持久化，请在 Render 控制台为该服务
+#    挂载 Disk 到 backend 目录（会覆盖同路径代码，需谨慎评估），或后续改造数据路径。
+# 3. 密钥类变量使用 sync: false，Render 会要求你在控制台手动填写，不会写进本文件。
+
+services:
+  - type: web
+    name: okeworkplace
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # pydantic 1.10 / fastapi 0.95 需要 Python 3.10（若平台提示该版本不可用，改成其它 3.10.x）
+      - key: PYTHON_VERSION
+        value: 3.10.13
+      - key: OKE_BASE_URL
+        value: https://www.okx.com
+      - key: OKE_ENABLE_SHUTDOWN
+        value: "false"
+      - key: POLL_INTERVAL_SECONDS
+        value: "5"
+      - key: MONITOR_TIMEFRAMES
+        value: 5m,15m,1h,4h
+      # 以下两项由你在 Render 控制台填写真实值
+      - key: OKE_API_KEY
+        sync: false
+      - key: OKE_SECRET_KEY
+        sync: false

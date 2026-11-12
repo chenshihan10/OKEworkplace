@@ -4,7 +4,7 @@
 
 > 加密货币量化分析终端。
 
-[![version](https://img.shields.io/badge/version-2.2.0-blue)](backend/app/main.py)
+[![version](https://img.shields.io/badge/version-2.3.0.0-blue)](backend/app/main.py)
 [![python](https://img.shields.io/badge/python-3.10+-green)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 

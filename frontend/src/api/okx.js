@@ -1,4 +1,5 @@
-export const apiBase = "http://127.0.0.1:8000";
+// 同源部署：桌面端由 FastAPI 托管，Web 部署亦同源，无需写死后端地址
+export const apiBase = "";
 
 export async function getJson(path) {
   const res = await fetch(`${apiBase}${path}`, { cache: "no-store" });
