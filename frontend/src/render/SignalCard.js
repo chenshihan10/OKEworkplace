@@ -6,7 +6,8 @@ export function renderSignals(signalsBySymbol) {
   const count = document.querySelector("[data-signal-count]");
   if (!target) return;
 
-  const signals = Object.values(signalsBySymbol || {});
+  // 快照 signals 是以币种为 key 的字典，对象本身没有 symbol 字段，这里把 key 补回去
+  const signals = Object.entries(signalsBySymbol || {}).map(([symbol, s]) => ({ ...s, symbol }));
   if (count) count.textContent = `${signals.length}`;
   if (!signals.length) {
     target.innerHTML = `<div class="empty">${labels.noSignals}</div>`;
