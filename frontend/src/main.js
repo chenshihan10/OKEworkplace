@@ -84,6 +84,9 @@ async function refresh() {
       renderSnapshot(snapshot);
     }
 
+    // 数据可用性提示：启动判定一次 + 长时间停更判定
+    if (network) checkDataAvailability(network, snapshot || globalData.snapshot);
+
     // 订单刷新（独立轮询，不阻塞行情渲染）
     refreshOrders().then(renderOrders).catch(() => {});
 
@@ -134,8 +137,9 @@ function renderSnapshot(data) {
 }
 
 // 顶部轻提示：5 秒自动消失，不打断操作
-let toastState = { key: '', at: 0 };
 let toastTimer = null;
+// 提示策略：启动检查一次；之后仅在数据长时间停更时提示一次
+const toastState = { startupChecked: false, staleNotified: false, pageStartedAt: Date.now() };
 
 function showToast(text, duration = 5000) {
   const el = document.getElementById('app-toast');
@@ -158,19 +162,53 @@ function renderNetwork(data) {
   target.textContent = isReal ? `${realDot} ${labels.realData}` : `${fallbackDot} ${labels.fallbackData}`;
   target.classList.toggle('real', isReal);
   target.classList.toggle('fallback', !isReal);
-  target.title = data.proxy_enabled ? `代理: ${data.proxy}` : labels.proxyDisabled;
 
-  // 行情不可用时给一条轻提示（代理端口来自后端配置，不写死）
-  const unavailableKey = isReal ? '' : `${data.proxy_enabled}|${data.proxy}`;
-  if (isReal) {
-    toastState.key = '';
-  } else if (toastState.key !== unavailableKey || Date.now() - toastState.at > 60000) {
-    toastState.key = unavailableKey;
-    toastState.at = Date.now();
-    const text = data.proxy_enabled
-      ? `代理未启动，行情暂不可用（${data.proxy}）`
-      : '行情暂不可用：网络不可达';
-    showToast(text);
+  // 中间态直接体现在 title 上：仍显示实时数据，但能看到最近一次更新距今多久
+  const ageNote = typeof data.data_age_seconds === 'number' ? ` · 最近数据 ${data.data_age_seconds}s 前` : '';
+  target.title = data.proxy_enabled ? `代理: ${data.proxy}${ageNote}` : labels.proxyDisabled;
+}
+
+/** 提示里只展示 host:port，不要把完整代理 URL 抛给用户 */
+function proxyHostPort(data) {
+  return (data.proxy || '').replace(/^https?:\/\//, '') || '未配置';
+}
+
+/**
+ * 提示策略（替换原先的“每次轮询重新触发”）：
+ * 1. 进入界面后判断一次，数据不可用才提示（带代理端口）；
+ * 2. 之后只在数据超过 stale_seconds 无更新时提示一次，恢复后自动复位；
+ * 3. 单次失败/抖动完全静默，状态不翻转，界面继续用上一次数据。
+ */
+function checkDataAvailability(network, snapshot) {
+  const isReal = network.data_source === 'REAL';
+  const bootCheck = network.boot_check_seconds || 10;
+  const staleAfter = network.stale_seconds || 60;
+  const lastSuccessAt = snapshot?.last_success_at || network.last_success_at || null;
+  const age = lastSuccessAt ? (Date.now() - new Date(lastSuccessAt).getTime()) / 1000 : null;
+
+  if (!toastState.startupChecked) {
+    if (isReal) {
+      toastState.startupChecked = true;
+    } else if (age === null && (Date.now() - toastState.pageStartedAt) / 1000 < bootCheck) {
+      return; // 刚启动，首笔数据还没到，先不判定
+    } else {
+      toastState.startupChecked = true;
+      showToast(network.proxy_enabled
+        ? `代理未启动，行情暂不可用（${proxyHostPort(network)}）`
+        : '行情暂不可用：网络不可达');
+    }
+  }
+
+  // 从未成功取数时，启动提示已经覆盖，不再重复提示
+  if (age === null) return;
+
+  if (age > staleAfter) {
+    if (!toastState.staleNotified) {
+      toastState.staleNotified = true;
+      showToast(`数据已停止更新（已 ${Math.floor(age)} 秒）`);
+    }
+  } else {
+    toastState.staleNotified = false;
   }
 }
 

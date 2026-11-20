@@ -49,6 +49,10 @@ class Settings(BaseModel):
     signal_confirm_count: int = Field(default=3)
     signal_flip_count: int = Field(default=4)
     signal_cooldown_minutes_v2: int = Field(default=5)
+    # v2.3：网络状态判定（以行情数据新鲜度为准，避免单次探测失败导致状态抖动）
+    data_grace_seconds: int = Field(default=15)      # 数据年龄在此范围内仍视为可用
+    data_stale_seconds: int = Field(default=60)      # 超过此秒数无更新才提示“停止更新”
+    data_boot_check_seconds: int = Field(default=10)  # 启动后等待首笔数据的宽限时间
 
 
 def build_settings() -> Settings:
@@ -73,6 +77,10 @@ def build_settings() -> Settings:
         signal_confirm_count=int(os.getenv("SIGNAL_CONFIRM_COUNT", "3")),
         signal_flip_count=int(os.getenv("SIGNAL_FLIP_COUNT", "4")),
         signal_cooldown_minutes_v2=int(os.getenv("SIGNAL_COOLDOWN_MINUTES", "5")),
+        # v2.3 网络状态判定阈值
+        data_grace_seconds=int(os.getenv("OKE_DATA_GRACE_SECONDS", "15")),
+        data_stale_seconds=int(os.getenv("OKE_DATA_STALE_SECONDS", "60")),
+        data_boot_check_seconds=int(os.getenv("OKE_DATA_BOOT_CHECK_SECONDS", "10")),
     )
 
 

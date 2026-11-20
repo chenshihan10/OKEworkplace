@@ -76,6 +76,9 @@ class MarketService:
         self._trackers: dict[str, DirectionTracker] = {}  # v2.2：每个币种一个方向跟踪器
         self._alerts = AlertStore(settings.signal_cooldown_minutes)
         self._db = SignalDB()  # v2.2：SQLite 持久化
+        self._started_at = datetime.now(timezone.utc)
+        # 最近一次成功取数时间：网络状态与“数据停更”判断以此为准
+        self._last_success_at = None
         self._client = OKEClient(settings.oke_base_url, settings.oke_api_key, settings.oke_secret_key)
         self._executor = ThreadPoolExecutor(max_workers=10)
         # 单币种内部 8 个行情接口并行拉取，避免串行耗时超过 5 秒轮询周期
@@ -188,6 +191,7 @@ class MarketService:
         self._latest_prices[item.symbol] = ticker
         self._latest_signals_cache[item.symbol] = signal
         self._prev_cvd[item.symbol] = cvd
+        self._last_success_at = datetime.now(timezone.utc)
 
         # v2.2：保存信号到 SQLite
         try:
@@ -230,13 +234,20 @@ class MarketService:
                 s["analysis"] = _analysis_to_dict(analysis)
             signals_for_frontend[symbol] = s
 
+        last_success = self._last_success_at
         return {
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            # updated_at 表示“数据实际更新时间”，长时间取数失败时不会假装更新
+            "updated_at": (last_success or self._started_at).isoformat(),
+            "last_success_at": last_success.isoformat() if last_success else None,
             "watch_items": [item.dict() for item in self._watch_items],
             "prices": self._latest_prices,
             "signals": signals_for_frontend,
             "alerts": self._alerts.list(20),
         }
+
+    def last_success_at(self):
+        """最近一次成功取数时间（UTC）；从未成功则为 None"""
+        return self._last_success_at
 
     def latest_signals(self):
         result = []
