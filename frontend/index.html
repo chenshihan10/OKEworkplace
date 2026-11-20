@@ -18,6 +18,32 @@
       line-height: 1.5;
     }
 
+    /* 轻提示：从顶部滑入，贴在页头下方（不遮挡版本/数据源那一行），5 秒后向上收起 */
+    .app-toast {
+      position: fixed;
+      top: 76px;
+      left: 50%;
+      transform: translate(-50%, -120%);
+      max-width: calc(100vw - 32px);
+      box-sizing: border-box;
+      padding: 10px 18px;
+      background: rgba(30, 41, 59, 0.96);
+      border: 1px solid #f59e0b;
+      border-left: 3px solid #f59e0b;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 0.85rem;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      opacity: 0;
+      pointer-events: none;
+      transition: transform 0.25s ease, opacity 0.25s ease;
+      z-index: 999;
+    }
+    .app-toast.show {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
     /* ===== 头部 ===== */
     header {
       background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
@@ -678,6 +704,9 @@
   </style>
 </head>
 <body>
+  <!-- 顶部轻提示（代理/行情不可用，自动消失） -->
+  <div id="app-toast" class="app-toast" role="status" aria-live="polite"></div>
+
   <!-- 头部 -->
   <header>
     <div class="header-left">

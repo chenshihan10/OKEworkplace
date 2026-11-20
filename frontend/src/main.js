@@ -17,6 +17,46 @@ const CONFIG = {
   analysisInterval: 2000,
 };
 
+// 开发模式：仅在 ?dev=1 时启用前端文件变更自动刷新；正式版无该参数，不产生任何请求
+const DEV_RELOAD = new URLSearchParams(window.location.search).has('dev');
+
+// 主动刷新（热更新/手动）时不要触发退出信标，否则 reload 会把后端一起关掉
+function reloadPage() {
+  window.__okeReloading = true;
+  window.location.reload();
+}
+
+function watchFrontendChanges() {
+  if (!DEV_RELOAD) return;
+  let baseline = null;
+  setInterval(async () => {
+    try {
+      const res = await fetch(`${apiBase}/dev/frontend-version`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (baseline === null) {
+        baseline = data.version;
+        return;
+      }
+      if (data.version !== baseline) {
+        reloadPage();
+      }
+    } catch (error) {
+      // 后端未就绪时忽略，下一轮再试
+    }
+  }, 1500);
+}
+
+// 手动刷新兜底：F5 / Ctrl+R
+document.addEventListener('keydown', (event) => {
+  const isF5 = event.key === 'F5';
+  const isReload = (event.ctrlKey || event.metaKey) && (event.key === 'r' || event.key === 'R');
+  if (isF5 || isReload) {
+    event.preventDefault();
+    reloadPage();
+  }
+});
+
 let globalData = {
   network: null,
   snapshot: null,
@@ -93,6 +133,19 @@ function renderSnapshot(data) {
   renderWatchlist(items, prices, signals);
 }
 
+// 顶部轻提示：5 秒自动消失，不打断操作
+let toastState = { key: '', at: 0 };
+let toastTimer = null;
+
+function showToast(text, duration = 5000) {
+  const el = document.getElementById('app-toast');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+}
+
 function renderNetwork(data) {
   const target = document.querySelector('[data-network-status]');
   if (!target) return;
@@ -106,6 +159,19 @@ function renderNetwork(data) {
   target.classList.toggle('real', isReal);
   target.classList.toggle('fallback', !isReal);
   target.title = data.proxy_enabled ? `代理: ${data.proxy}` : labels.proxyDisabled;
+
+  // 行情不可用时给一条轻提示（代理端口来自后端配置，不写死）
+  const unavailableKey = isReal ? '' : `${data.proxy_enabled}|${data.proxy}`;
+  if (isReal) {
+    toastState.key = '';
+  } else if (toastState.key !== unavailableKey || Date.now() - toastState.at > 60000) {
+    toastState.key = unavailableKey;
+    toastState.at = Date.now();
+    const text = data.proxy_enabled
+      ? `代理未启动，行情暂不可用（${data.proxy}）`
+      : '行情暂不可用：网络不可达';
+    showToast(text);
+  }
 }
 
 function renderOffline(error) {
@@ -232,11 +298,13 @@ function init() {
   
   // 启动
   loadVersion();
+  watchFrontendChanges();
   refresh();
   setInterval(refresh, CONFIG.refreshInterval);
   
-  // 关闭时通知后端
+  // 关闭时通知后端（热刷新/手动刷新时不通知，否则会把后端一起关掉）
   window.addEventListener('beforeunload', function() {
+    if (window.__okeReloading) return;
     navigator.sendBeacon(`${apiBase}/api/shutdown`, '{}');
   });
   

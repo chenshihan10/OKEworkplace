@@ -14,6 +14,10 @@ export function renderMarketCards(items, prices, signals) {
     const source = hasData ? (ticker.source || "okx").toUpperCase() : "数据不可用";
     const sourceClass = hasData ? "source-real" : "source-fallback";
 
+    // v3.0：市场状态（纯规则），数据缺失时不显示
+    const regime = analysis.market_regime || {};
+    const regimeLabel = regime.regime && regime.regime !== "UNKNOWN" ? regime.label : "";
+
     // 市场状态 / 方向
     let stateText = "-";
     let scoreText = "-/100";
@@ -38,7 +42,10 @@ export function renderMarketCards(items, prices, signals) {
             <span class="symbol">${item.symbol}</span>
             <span class="alias">${item.alias || item.timeframe || ""}</span>
           </div>
-          <span class="source ${sourceClass}">${source}</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            ${regimeLabel ? `<span style="font-size:0.72rem;color:#94a3b8;border:1px solid #334155;border-radius:4px;padding:1px 6px;" title="市场状态：${regimeLabel}">${regimeLabel}</span>` : ""}
+            <span class="source ${sourceClass}">${source}</span>
+          </div>
         </div>
         
         <div class="market-price-row">
