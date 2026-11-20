@@ -14,7 +14,7 @@ export const labels = {
   bestBid: "最优买价",
   backendOffline: "后端离线",
   realData: "实时数据 (OKX)",
-  fallbackData: "本地数据",
+  fallbackData: "数据不可用",
   proxyDisabled: "代理已禁用",
   marketScore: "综合评分",
   directionLong: "做多",

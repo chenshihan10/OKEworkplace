@@ -28,7 +28,7 @@ def start_scheduler() -> None:
         seconds=settings.poll_interval_seconds,
         id="refresh_all_markets",
         replace_existing=True,
-        max_instances=2,
-        misfire_grace_time=10,
+        max_instances=3,
+        misfire_grace_time=20,
     )
     scheduler.start()

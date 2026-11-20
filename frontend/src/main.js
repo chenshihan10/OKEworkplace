@@ -100,7 +100,7 @@ function renderNetwork(data) {
   const realDot = '\u{1F7E2}';
   const fallbackDot = '\u{1F7E1}';
   const isReal = data.data_source === 'REAL';
-  const labels = { realData: '实时数据 (OKX)', fallbackData: '本地数据', proxyDisabled: '代理已禁用' };
+  const labels = { realData: '实时数据 (OKX)', fallbackData: '数据不可用', proxyDisabled: '代理已禁用' };
   
   target.textContent = isReal ? `${realDot} ${labels.realData}` : `${fallbackDot} ${labels.fallbackData}`;
   target.classList.toggle('real', isReal);

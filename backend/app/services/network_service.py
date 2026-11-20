@@ -2,6 +2,12 @@ import requests
 
 from app.core.config import requests_proxies, settings
 
+try:
+    import certifi
+    CA_BUNDLE = certifi.where()
+except Exception:
+    CA_BUNDLE = True
+
 
 def proxy_url() -> str:
     proxies = requests_proxies()
@@ -21,6 +27,7 @@ def okx_reachable() -> bool:
                 params={"instId": "ETH-USDT-SWAP"},
                 timeout=8,
                 proxies=proxies or None,
+                verify=CA_BUNDLE,
             )
             response.raise_for_status()
             payload = response.json()

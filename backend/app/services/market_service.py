@@ -78,6 +78,8 @@ class MarketService:
         self._db = SignalDB()  # v2.2：SQLite 持久化
         self._client = OKEClient(settings.oke_base_url, settings.oke_api_key, settings.oke_secret_key)
         self._executor = ThreadPoolExecutor(max_workers=10)
+        # 单币种内部 8 个行情接口并行拉取，避免串行耗时超过 5 秒轮询周期
+        self._fetch_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="oke-fetch")
 
     @staticmethod
     def _calc_cvd(trades: list) -> float:
@@ -109,15 +111,24 @@ class MarketService:
         _save_watchlist(self._watch_items)
 
     def _refresh_one(self, item: WatchItem) -> None:
-        """v2.1：刷新单个币种数据"""
-        ticker = self._client.fetch_ticker(item.symbol)
-        candles = self._client.fetch_candles(item.symbol, item.timeframe)
-        open_interest = self._client.fetch_open_interest(item.symbol)
-        funding_rate = self._client.fetch_funding_rate(item.symbol)
-        mark_price = self._client.fetch_mark_price(item.symbol)
-        index_price = self._client.fetch_index_price(item.symbol)
-        trades = self._client.fetch_trades(item.symbol)
-        books = self._client.fetch_books(item.symbol)
+        """v2.1：刷新单个币种数据（8 个接口并行拉取）"""
+        f_ticker = self._fetch_pool.submit(self._client.fetch_ticker, item.symbol)
+        f_candles = self._fetch_pool.submit(self._client.fetch_candles, item.symbol, item.timeframe)
+        f_oi = self._fetch_pool.submit(self._client.fetch_open_interest, item.symbol)
+        f_funding = self._fetch_pool.submit(self._client.fetch_funding_rate, item.symbol)
+        f_mark = self._fetch_pool.submit(self._client.fetch_mark_price, item.symbol)
+        f_index = self._fetch_pool.submit(self._client.fetch_index_price, item.symbol)
+        f_trades = self._fetch_pool.submit(self._client.fetch_trades, item.symbol)
+        f_books = self._fetch_pool.submit(self._client.fetch_books, item.symbol)
+
+        ticker = f_ticker.result()
+        candles = f_candles.result()
+        open_interest = f_oi.result()
+        funding_rate = f_funding.result()
+        mark_price = f_mark.result()
+        index_price = f_index.result()
+        trades = f_trades.result()
+        books = f_books.result()
 
         # v2.1：自行计算 OI 变化百分比（OKX API 不直接提供）
         current_oi = open_interest.get("open_interest", 0) or 0

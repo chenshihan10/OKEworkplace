@@ -10,8 +10,9 @@ export function renderMarketCards(items, prices, signals) {
     const signal = signals[item.symbol] || {};
     const analysis = getAnalysis(item.symbol) || {};
     const macd = signal.macd || {};
-    const source = (ticker.source || "-").toUpperCase();
-    const sourceClass = source === "OKX" ? "source-real" : "source-fallback";
+    const hasData = ticker.price != null;
+    const source = hasData ? (ticker.source || "okx").toUpperCase() : "数据不可用";
+    const sourceClass = hasData ? "source-real" : "source-fallback";
 
     // 市场状态 / 方向
     let stateText = "-";
