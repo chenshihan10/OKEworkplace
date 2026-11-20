@@ -25,7 +25,8 @@ def okx_reachable() -> bool:
             response = requests.get(
                 settings.oke_base_url.rstrip("/") + "/api/v5/market/ticker",
                 params={"instId": "ETH-USDT-SWAP"},
-                timeout=8,
+                # 探测要快：代理未启动时不要拖住 /network/status 与界面提示
+                timeout=2,
                 proxies=proxies or None,
                 verify=CA_BUNDLE,
             )

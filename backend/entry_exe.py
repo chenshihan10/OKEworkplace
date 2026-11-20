@@ -35,6 +35,8 @@ if str(_backend_dir) not in sys.path:
 from app.core.config import APP_VERSION
 
 APP_TITLE = f"OKEworkplace v{APP_VERSION} - 交易分析终端"
+# 开发模式给页面带 dev=1 参数，前端据此启用文件变更自动刷新；打包版不带，零开销
+DEV_QUERY = "" if getattr(sys, "frozen", False) else "?dev=1"
 
 # 错误日志文件（用于诊断无法启动的问题）
 _LOG_DIR = _backend_dir if not getattr(sys, 'frozen', False) else Path.cwd()
@@ -185,7 +187,7 @@ def _open_gui_window(port):
 
         window = webview.create_window(
             title=APP_TITLE,
-            url=f"http://{HOST}:{port}/index.html",
+            url=f"http://{HOST}:{port}/index.html{DEV_QUERY}",
             width=1280,
             height=800,
             min_size=(960, 600),
@@ -229,7 +231,7 @@ def _open_gui_window(port):
 def _open_browser(port):
     """打开系统默认浏览器（回退方案）"""
     import webbrowser
-    url = f"http://{HOST}:{port}/index.html"
+    url = f"http://{HOST}:{port}/index.html{DEV_QUERY}"
     try:
         webbrowser.open(url)
     except Exception as e:

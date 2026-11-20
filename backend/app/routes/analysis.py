@@ -6,39 +6,10 @@ from datetime import datetime, timezone
 from app.core.config import settings
 from app.services.market_service import market_service
 from app.services.db_store import SignalDB
-from app.model import analyze_capital_behavior
 from app.services.decision_engine import build_decision_trace, compute_confidence, detect_trend_phase
+from app.services.market_regime import classify_from_signal
 
 router = APIRouter()
-
-
-def _prepare_analysis_inputs(symbol: str) -> dict:
-    """为资本行为分析准备输入数据"""
-    prices = market_service._latest_prices
-    signals = market_service._latest_signals_cache
-
-    if symbol not in prices or symbol not in signals:
-        return None
-
-    ticker = prices[symbol]
-    signal = signals[symbol]
-    analysis = signal.get("analysis")
-
-    price = ticker.get("price", 0)
-    previous_price = ticker.get("previous_price", price)
-
-    return {
-        "symbol": symbol,
-        "price": price,
-        "previous_price": previous_price,
-        "price_change_pct": (price - previous_price) / previous_price * 100 if previous_price else 0,
-        "oi_change_pct": signal.get("oi_change_pct", 0),
-        "cvd": signal.get("cvd", 0),
-        "cvd_change": signal.get("cvd_change", 0),
-        "funding_rate": signal.get("funding_rate", 0),
-        "volatility": signal.get("volatility", 0),
-        "data_source": "OKX_REAL" if str(ticker.get("source", "")).lower() == "okx" else "FALLBACK",
-    }
 
 
 def _estimate_pending_status(symbol: str) -> dict:
@@ -177,17 +148,14 @@ def get_market_analysis(symbol: str):
                 detail=json.dumps(pending_info)
             )
 
-        # 资金行为分析
-        inputs = _prepare_analysis_inputs(symbol)
-        capital_behavior = analyze_capital_behavior(
-            price_change_pct=inputs.get("price_change_pct", 0) if inputs else 0,
-            oi_change_pct=inputs.get("oi_change_pct", 0) if inputs else 0,
-            cvd_change=inputs.get("cvd_change", 0) if inputs else 0,
-            current_cvd=inputs.get("cvd", 0) if inputs else 0,
-            buy_volume=0,
-            sell_volume=0,
-            funding_rate=inputs.get("funding_rate", 0) if inputs else 0,
-        )
+        # 资金行为：需要真实买卖量（逐笔成交）才有意义。
+        # 此前固定传 buy_volume=0 / sell_volume=0，分析器恒定输出“数据模糊”，属于误导性结论。
+        # 在接入真实 trades 数据源之前，明确返回不可用，不再执行该计算。
+        capital_behavior = {
+            "type": "unavailable",
+            "available": False,
+            "reason": "缺少真实买卖量数据，资金行为暂不可用",
+        }
 
         recommendation = _generate_recommendation(analysis, capital_behavior)
 
@@ -195,6 +163,9 @@ def get_market_analysis(symbol: str):
         inputs_for_trace = signal  # signal dict 自带 ema20, ema60, rsi14, candles, etc.
         decision_trace = build_decision_trace(symbol, analysis, inputs_for_trace)
         confidence = compute_confidence(analysis, decision_trace)
+
+        # v3.0 前置：市场状态分类（纯规则，不参与现有评分）
+        market_regime = classify_from_signal(signal, analysis.price)
 
         return {
             "symbol": symbol,
@@ -221,6 +192,7 @@ def get_market_analysis(symbol: str):
             },
             "confidence": confidence,
             "trend_phase": decision_trace.trend_phase,  # v2.2：趋势阶段
+            "market_regime": market_regime,  # v3.0：市场状态分类
             "data_source": analysis.data_source,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -229,6 +201,27 @@ def get_market_analysis(symbol: str):
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/market-regime/{symbol}")
+def get_market_regime(symbol: str):
+    """v3.0：单独查询市场状态（牛/熊/震荡/高波动）"""
+    prices = market_service._latest_prices
+    signals = market_service._latest_signals_cache
+
+    if symbol not in prices or symbol not in signals:
+        pending_info = _estimate_pending_status(symbol)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=json.dumps(pending_info),
+        )
+
+    ticker = prices[symbol]
+    result = classify_from_signal(signals[symbol], ticker.get("price"))
+    result["symbol"] = symbol
+    result["price"] = ticker.get("price")
+    result["source"] = ticker.get("source")
+    return result
 
 
 @router.get("/signals/history/{symbol}")

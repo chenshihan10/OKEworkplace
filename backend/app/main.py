@@ -59,6 +59,21 @@ def root():
     return RedirectResponse("/index.html")
 
 
+# 开发模式专用：前端热刷新版本号（打包后不注册该路由，正式版零开销）
+if not getattr(sys, "frozen", False):
+    @app.get("/dev/frontend-version")
+    def dev_frontend_version() -> dict:
+        """返回 frontend/ 下所有文件的最新修改时间，前端定时比对后自动 reload。"""
+        latest = 0.0
+        for item in FRONTEND_DIR.rglob("*"):
+            try:
+                if item.is_file():
+                    latest = max(latest, item.stat().st_mtime)
+            except OSError:
+                continue
+        return {"dev": True, "version": latest}
+
+
 @app.post("/api/shutdown")
 def shutdown():
     """前端关闭窗口时调用，通知后端停止"""
