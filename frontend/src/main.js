@@ -204,6 +204,19 @@ async function _submitOrder() {
   }
 }
 
+// 版本号来自后端 /health，保证界面与真正运行的进程一致
+async function loadVersion() {
+  const target = document.querySelector('[data-app-version]');
+  if (!target) return;
+  try {
+    const res = await fetch(`${apiBase}/health`, { cache: 'no-store' });
+    const data = await res.json();
+    if (data && data.version) target.textContent = `v${data.version}`;
+  } catch (error) {
+    // 后端未就绪时保留占位，不打断主流程
+  }
+}
+
 // 初始化
 function init() {
   // 初始化订单模块
@@ -218,6 +231,7 @@ function init() {
   document.head.appendChild(style);
   
   // 启动
+  loadVersion();
   refresh();
   setInterval(refresh, CONFIG.refreshInterval);
   

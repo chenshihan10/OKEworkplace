@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -7,6 +8,24 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(BASE_DIR / ".env")
+
+# 版本单一真源：仓库根目录 VERSION 文件
+# 开发模式 backend/app/core/config.py → BASE_DIR=backend，向上一级取仓库根
+# 打包后 _internal/app/core/config.py → BASE_DIR=_internal，VERSION 随包放在此处
+if getattr(sys, "frozen", False):
+    VERSION_FILE = BASE_DIR / "VERSION"
+else:
+    VERSION_FILE = BASE_DIR.parent / "VERSION"
+
+
+def read_version() -> str:
+    try:
+        return VERSION_FILE.read_text(encoding="utf-8").strip()
+    except Exception:
+        return "0.0.0.0"
+
+
+APP_VERSION = read_version()
 
 
 class Settings(BaseModel):

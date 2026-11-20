@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.core.config import APP_VERSION
 from app.core.scheduler import start_scheduler, stop_scheduler
 from app.routes import coins, monitor, network, analysis, orders
 from app.shutdown import shutdown_event
@@ -22,7 +23,6 @@ else:
     # 开发模式 backend/app/main.py → parents[2] = project_root
     FRONTEND_DIR = _this_file.parents[2] / "frontend"
 
-APP_VERSION = "2.3.0.0"
 # 正式部署（Web）时通过环境变量关闭进程自杀接口，避免服务被任意访问者关停
 ENABLE_SHUTDOWN = os.getenv("OKE_ENABLE_SHUTDOWN", "true").lower() == "true"
 

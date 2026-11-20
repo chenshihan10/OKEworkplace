@@ -80,6 +80,14 @@
       border: 1px solid #3b82f6;
     }
 
+    /* 版本角标：低调显示当前运行版本 */
+    .app-version {
+      font-size: 0.72rem;
+      color: #64748b;
+      font-family: Consolas, Monaco, monospace;
+      user-select: text;
+    }
+
     /* ===== 主容器 ===== */
     main {
       max-width: 1600px;
@@ -675,6 +683,7 @@
     <div class="header-left">
       <div class="header-title">⚡ 量化分析终端</div>
       <div class="network-status" data-network-status title="">🟡 检查连接...</div>
+      <span class="app-version" data-app-version title="当前运行版本">v--</span>
     </div>
     <div class="header-right">
       <div class="updated-time">更新: <span data-updated-at>--</span></div>

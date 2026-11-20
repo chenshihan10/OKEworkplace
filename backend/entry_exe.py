@@ -32,6 +32,10 @@ _backend_dir = Path(__file__).resolve().parent
 if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
+from app.core.config import APP_VERSION
+
+APP_TITLE = f"OKEworkplace v{APP_VERSION} - 交易分析终端"
+
 # 错误日志文件（用于诊断无法启动的问题）
 _LOG_DIR = _backend_dir if not getattr(sys, 'frozen', False) else Path.cwd()
 _STARTUP_LOG = _LOG_DIR / "startup_error.log"
@@ -55,11 +59,13 @@ def find_available_port(start_port=8000, max_attempts=20):
 
 def _wait_for_server(port, timeout=30):
     """等待后端服务器就绪"""
+    # 本机自检必须绕过代理：.env 里的 HTTP_PROXY 会让 urllib 把 127.0.0.1 也发给代理
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     start = time.time()
     while time.time() - start < timeout:
         try:
             url = f"http://{HOST}:{port}/health"
-            resp = urllib.request.urlopen(url, timeout=2)
+            resp = opener.open(url, timeout=2)
             if json.loads(resp.read()).get("status") == "ok":
                 return True
         except Exception:
@@ -151,7 +157,7 @@ def _start_tray_icon(window_ref):
             pystray.MenuItem("退出程序", on_exit),
         )
 
-        icon = pystray.Icon("OKEworkplace", icon_img, "OKEworkplace - 交易分析终端", menu)
+        icon = pystray.Icon("OKEworkplace", icon_img, APP_TITLE, menu)
         icon.run()
     except ImportError:
         pass  # 无 pystray 时静默跳过
@@ -178,7 +184,7 @@ def _open_gui_window(port):
             return False            # 取消 - 阻止关闭
 
         window = webview.create_window(
-            title="OKEworkplace - 交易分析终端",
+            title=APP_TITLE,
             url=f"http://{HOST}:{port}/index.html",
             width=1280,
             height=800,
@@ -210,6 +216,11 @@ def _open_gui_window(port):
         shutdown_event.set()
         return True
     except Exception as e:
+        # 打包后无控制台，必须落盘，否则 GUI 启动失败完全不可见
+        with open(_STARTUP_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] GUI 窗口启动失败:\n")
+            f.write(traceback.format_exc())
+            f.write("\n")
         print(f"  GUI 窗口启动失败: {e}")
         print(f"  回退到浏览器打开...")
         return False

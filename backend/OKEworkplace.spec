@@ -1,9 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path as _Path
 from PyInstaller.utils.hooks import collect_data_files
+
+# 版本号唯一来源：仓库根目录 VERSION 文件
+APP_VERSION = (_Path(SPECPATH).parent / 'VERSION').read_text(encoding='utf-8').strip()
 
 # 核心依赖数据文件收集
 datas = []
-for pkg in ['requests', 'fastapi', 'uvicorn', 'apscheduler', 'webview']:
+for pkg in ['requests', 'fastapi', 'uvicorn', 'apscheduler', 'webview', 'certifi']:
     try:
         datas.extend(collect_data_files(pkg))
     except Exception:
@@ -12,6 +16,7 @@ for pkg in ['requests', 'fastapi', 'uvicorn', 'apscheduler', 'webview']:
 # 自定义数据文件
 datas += [
     ('..\\frontend', 'frontend'),
+    ('..\\VERSION', '.'),
     ('.env', '.'),
 ]
 
@@ -35,6 +40,7 @@ a = Analysis(
         'tzlocal', 'tzdata',
         'httpx',
         'dotenv',
+        'certifi',
         'pystray', 'PIL',
         # 自定义模块
         'app', 'app.main', 'app.models', 'app.shutdown',
@@ -84,7 +90,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='OKEworkplace_v2.3',
+    name='OKEworkplace_v%s' % APP_VERSION,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -106,5 +112,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='OKEworkplace_v2.3',
+    name='OKEworkplace_v%s' % APP_VERSION,
 )
