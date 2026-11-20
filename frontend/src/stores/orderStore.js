@@ -7,6 +7,7 @@ let state = {
   orders: [],
   summary: { open_orders: 0, today_closed: 0, total_pnl: 0, total_closed: 0, win_rate: 0 },
   history: [],
+  levels: [],
 };
 
 /** 刷新订单列表 */
@@ -18,6 +19,15 @@ export async function refreshOrders() {
 
     const sumRes = await fetch(`${API_BASE}/orders/summary`);
     state.summary = await sumRes.json();
+
+    // 价格触及建议（后端已做 30 分钟冷却）
+    try {
+      const levelRes = await fetch(`${API_BASE}/price-levels/check`);
+      const levelData = await levelRes.json();
+      state.levels = levelData.levels || [];
+    } catch (e) {
+      state.levels = [];
+    }
 
     eventBus.emit('orders:updated');
   } catch (e) {
@@ -58,3 +68,4 @@ export async function closeOrder(orderId, closePrice) {
 /** 获取状态 */
 export function getOrders() { return state.orders; }
 export function getSummary() { return state.summary; }
+export function getLevels() { return state.levels; }

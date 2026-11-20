@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -40,13 +41,40 @@ class OrderManager:
     """用户订单管理服务"""
 
     DB_NAME = "user_trades.db"
+    # 同一订单 + 同一建议的提示冷却时间（秒）
+    LEVEL_ALERT_COOLDOWN_SECONDS = 30 * 60
 
     def __init__(self, db_dir: str = None):
         if db_dir is None:
             db_dir = _db_dir()
         os.makedirs(db_dir, exist_ok=True)
         self.db_path = os.path.join(db_dir, self.DB_NAME)
+        # 价格触及提示的最近触发时间：{(order_id, suggestion): timestamp}
+        self._level_alert_times: Dict[tuple, float] = {}
         self._init_db()
+
+    def level_alert_state(self, order_id: int, suggestion: str) -> dict:
+        """价格触及提示冷却。
+
+        同一订单、同一建议在 30 分钟内只提示一次，避免 5 秒轮询反复打扰。
+        返回 alert（本次是否应提示）与 cooldown_remaining（剩余秒数）。
+        """
+        key = (order_id, suggestion)
+        now = time.time()
+        last = self._level_alert_times.get(key)
+
+        if last is not None:
+            remaining = int(self.LEVEL_ALERT_COOLDOWN_SECONDS - (now - last))
+            if remaining > 0:
+                return {"alert": False, "cooldown_remaining": remaining}
+
+        self._level_alert_times[key] = now
+        return {"alert": True, "cooldown_remaining": 0}
+
+    def clear_level_alerts(self, order_id: int) -> None:
+        """订单平仓后清理其冷却记录"""
+        for key in [k for k in self._level_alert_times if k[0] == order_id]:
+            self._level_alert_times.pop(key, None)
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -141,6 +169,9 @@ class OrderManager:
             )
             # 删除原订单
             conn.execute("DELETE FROM orders WHERE id=?", (order_id,))
+
+        # 平仓后清理该订单的价格触及冷却记录
+        self.clear_level_alerts(order_id)
 
         return {
             "id": order_id,

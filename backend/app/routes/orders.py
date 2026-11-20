@@ -81,9 +81,9 @@ def order_summary():
 @router.get("/price-levels/check", summary="价格触及检测")
 def check_price_levels(symbol: Optional[str] = None, current_price: Optional[float] = None):
     """检测当前价格是否接近某个开单价。
-    
+
     如果未提供 current_price，尝试从全局缓存获取最新价格。
-    由于价格触及检测需要联动 SignalEngine，该功能需要在后续版本中完善。
+    进入 ±0.5% 区间时结合系统方向给出建议，并由服务层做 30 分钟冷却。
     """
     from app.services.market_service import market_service
 
@@ -98,14 +98,15 @@ def check_price_levels(symbol: Optional[str] = None, current_price: Optional[flo
     for order in orders:
         price = current_price
         if price is None:
-            ticker = snapshot.get("tickers", {}).get(order["symbol"], {})
-            price = ticker.get("last", ticker.get("price"))
+            ticker = snapshot.get("prices", {}).get(order["symbol"], {})
+            price = ticker.get("price", ticker.get("last"))
 
         if price is None:
             continue
 
         distance_pct = round((price - order["entry_price"]) / order["entry_price"] * 100, 2)
         threshold_pct = 0.5  # ±0.5%
+        triggered = abs(distance_pct) <= threshold_pct
 
         # 构建基础结果
         result = {
@@ -115,12 +116,16 @@ def check_price_levels(symbol: Optional[str] = None, current_price: Optional[flo
             "direction": order["direction"],
             "current_price": price,
             "distance_pct": distance_pct,
+            "threshold_pct": threshold_pct,
+            "triggered": triggered,
             "suggestion": "observe",
-            "reason": "暂无系统信号联动（需集成 SignalEngine）",
+            "reason": "价格尚未回到开仓价附近",
+            "alert": False,
+            "cooldown_remaining": 0,
         }
 
         # 在触及范围内时给出不同建议
-        if abs(distance_pct) <= threshold_pct:
+        if triggered:
             # 尝试获取当前系统评分
             signal = snapshot.get("signals", {}).get(order["symbol"], {})
             sys_dir = signal.get("analysis", {}).get("direction")
@@ -139,10 +144,11 @@ def check_price_levels(symbol: Optional[str] = None, current_price: Optional[flo
                     result["reason"] = f"系统方向 {sys_dir}(评分 {sys_score}) 与你持仓方向 {order['direction']} 相反"
             else:
                 result["signals_ready"] = False
+                result["reason"] = "价格已触及开仓价附近，系统信号尚未就绪"
 
-            levels.append(result)
+            # 服务层冷却：同一订单 + 同一建议 30 分钟内只提示一次
+            result.update(order_mgr.level_alert_state(order["id"], result["suggestion"]))
 
-        else:
-            levels.append(result)
+        levels.append(result)
 
     return {"levels": levels}

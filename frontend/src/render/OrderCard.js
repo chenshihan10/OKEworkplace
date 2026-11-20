@@ -1,6 +1,6 @@
 /** V2.3 订单管理渲染 */
 import { fmtNumber, dirIcons } from '../utils/format.js';
-import { getOrders, getSummary, closeOrder } from '../stores/orderStore.js';
+import { getOrders, getSummary, getLevels, closeOrder } from '../stores/orderStore.js';
 import { getPrices } from '../stores/marketStore.js';
 
 let container;
@@ -16,6 +16,11 @@ export function renderOrders() {
   const orders = getOrders();
   const summary = getSummary();
   const prices = getPrices();
+  const levels = getLevels();
+  const levelMap = {};
+  for (const level of levels) levelMap[level.order_id] = level;
+
+  const suggestionLabels = { hold: "建议持有", consider_close: "考虑平仓" };
 
   let html = '';
 
@@ -38,6 +43,18 @@ export function renderOrders() {
         : (order.entry_price - currentPrice) / order.entry_price * 100;
       const pnlColor = pnlPct >= 0 ? '#22c55e' : '#ef4444';
       const icon = dirIcons[order.direction] || '📊';
+      const level = levelMap[order.id];
+      const label = level ? suggestionLabels[level.suggestion] : '';
+
+      let levelHtml = '';
+      if (level && level.triggered && label) {
+        const levelColor = level.suggestion === 'consider_close' ? '#f59e0b' : '#22c55e';
+        const sign = level.distance_pct > 0 ? '+' : '';
+        const cooldownNote = level.cooldown_remaining > 0
+          ? `（${Math.ceil(level.cooldown_remaining / 60)} 分钟内已提示过）`
+          : '';
+        levelHtml = `<div style="margin-top:6px;font-size:0.8rem;color:${levelColor};">⚡ 价格触及开仓价（${sign}${level.distance_pct}%）· ${label}：${level.reason}${cooldownNote}</div>`;
+      }
 
       html += `
         <div class="order-card" style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:12px 16px;margin-bottom:8px;">
@@ -55,6 +72,7 @@ export function renderOrders() {
             ${order.quantity ? `<span>数量: ${order.quantity}</span>` : ''}
             ${order.note ? `<span style="color:#94a3b8;">📝 ${order.note}</span>` : ''}
           </div>
+          ${levelHtml}
           <div style="margin-top:8px;display:flex;gap:8px;justify-content:flex-end;">
             <button onclick="window.__closeOrder(${order.id}, '${order.symbol}', ${currentPrice})"
                     style="padding:4px 12px;background:#dc2626;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.8rem;">✕ 平仓</button>
