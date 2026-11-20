@@ -163,12 +163,12 @@ OKEworkplace/
 |------|------|
 | `GET /api/signals/history/{symbol}` | 历史信号查询 |
 | `GET /api/analysis/{symbol}` | [增强] 含 confidence / decision_trace / trend_phase / mark_price |
-| `POST /api/orders` | v2.3 开单 |
-| `GET /api/orders` | v2.3 当前持仓 |
-| `POST /api/orders/{id}/close` | v2.3 平仓 |
-| `GET /api/orders/history` | v2.3 历史订单 |
-| `GET /api/orders/summary` | v2.3 订单统计 |
-| `GET /price-levels/check` | v2.3 价格触及检测 |
+| `POST /api/v2.3/orders` | v2.3 开单 |
+| `GET /api/v2.3/orders` | v2.3 当前持仓 |
+| `POST /api/v2.3/orders/{id}/close` | v2.3 平仓 |
+| `GET /api/v2.3/orders/history` | v2.3 历史订单 |
+| `GET /api/v2.3/orders/summary` | v2.3 订单统计 |
+| `GET /api/v2.3/price-levels/check` | v2.3 价格触及检测（含 30 分钟冷却） |
 | `GET /api/market-regime/{symbol}` | 市场状态（牛/熊/震荡/高波动） |
 
 ### 完整端点
