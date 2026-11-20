@@ -138,6 +138,7 @@ OKEworkplace/
 │   │   │   ├── indicator_service.py # EMA/RSI/MACD/ATR
 │   │   │   ├── oke_client.py       # OKX API 客户端（certifi 显式校验）
 │   │   │   ├── network_service.py  # 网络可达性探测
+│   │   │   ├── market_regime.py    # 市场状态分类（牛/熊/震荡/高波动）
 │   │   │   └── alert_store.py      # v2.2 告警去重
 │   │   └── strategy/
 │   │       └── trading_rules.py    # v2.0 规则（已降级）
@@ -168,6 +169,7 @@ OKEworkplace/
 | `GET /api/orders/history` | v2.3 历史订单 |
 | `GET /api/orders/summary` | v2.3 订单统计 |
 | `GET /price-levels/check` | v2.3 价格触及检测 |
+| `GET /api/market-regime/{symbol}` | 市场状态（牛/熊/震荡/高波动） |
 
 ### 完整端点
 | 端点 | 说明 |
