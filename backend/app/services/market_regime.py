@@ -79,6 +79,18 @@ def classify(
         # EMA120 数据不足时以 EMA60 为基准
         result["ema_spread_pct"] = _round((ema20 - ema60) / ema60 * 100)
 
+    # 0. 价格跳变守卫：发生合约调整/重新定价时，窗口内价格会整体换档，
+    #    此时 EMA/ATR 全部失真（例如 SNDK-USDT 由 787 跌到 87），
+    #    与其给出“高波动”误导结论，不如明确降级为数据不足。
+    if ema20 and ema20 > 0:
+        deviation_pct = abs(price - ema20) / price * 100
+        if deviation_pct > 50:
+            result["reasons"].append(
+                f"价格 {price} 与 EMA20 {ema20:.2f} 偏离 {deviation_pct:.0f}%，"
+                "疑似合约调整或价格跳变，均线与 ATR 暂时失真，不做判定"
+            )
+            return result
+
     # 1. 高波动优先：波动率过高时，趋势判断本身不稳定
     if atr_pct is not None and atr_pct >= t["atr_high_pct"]:
         result["regime"] = "HIGH_VOLATILITY"

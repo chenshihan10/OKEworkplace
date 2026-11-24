@@ -205,19 +205,46 @@ def get_market_analysis(symbol: str):
 
 @router.get("/market-regime/{symbol}")
 def get_market_regime(symbol: str):
-    """v3.0：单独查询市场状态（牛/熊/震荡/高波动）"""
+    """v3.0：单独查询市场状态（牛/熊/震荡/高波动/数据不足）
+
+    该接口是只读的降级查询：数据未就绪、币种不在监控列表或判定异常时，
+    统一返回 200 + regime=UNKNOWN，把原因放在 reasons/pending_info 里，
+    不再抛 5xx（避免调用方把“暂未同步”当成接口故障）。
+    """
     prices = market_service._latest_prices
     signals = market_service._latest_signals_cache
 
     if symbol not in prices or symbol not in signals:
         pending_info = _estimate_pending_status(symbol)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=json.dumps(pending_info),
-        )
+        return {
+            "regime": "UNKNOWN",
+            "label": "数据不足",
+            "atr_pct": None,
+            "ema_spread_pct": None,
+            "reasons": [pending_info["msg"]],
+            "thresholds": None,
+            "symbol": symbol,
+            "pending": True,
+            "pending_info": pending_info,
+        }
 
     ticker = prices[symbol]
-    result = classify_from_signal(signals[symbol], ticker.get("price"))
+    try:
+        result = classify_from_signal(signals[symbol], ticker.get("price"))
+    except Exception as e:  # 指标异常不应让整个查询报错
+        return {
+            "regime": "UNKNOWN",
+            "label": "数据不足",
+            "atr_pct": None,
+            "ema_spread_pct": None,
+            "reasons": [f"市场状态判定失败：{e}"],
+            "thresholds": None,
+            "symbol": symbol,
+            "price": ticker.get("price"),
+            "source": ticker.get("source"),
+            "pending": False,
+        }
+
     result["symbol"] = symbol
     result["price"] = ticker.get("price")
     result["source"] = ticker.get("source")
