@@ -48,6 +48,9 @@ a = Analysis(
         'app.routes', 'app.routes.coins', 'app.routes.monitor',
         'app.routes.analysis', 'app.routes.network', 'app.routes.orders',
         'app.routes.predictions',          # V3.0
+        'app.routes.risk',                 # 2.5.0
+        'app.routes.mtf',                  # 2.5.0
+        'app.routes.orderflow',            # 2.5.0
         'app.services', 'app.services.market_service',
         'app.services.oke_client', 'app.services.signal_engine',
         'app.services.indicator_service', 'app.services.network_service',
@@ -62,6 +65,10 @@ a = Analysis(
         'app.services.future_validator',   # V3.0
         'app.services.maintenance_service', # V3.0
         'app.services.backup_service',     # V3.0
+        'app.services.multi_timeframe_service',  # 2.5.0
+        'app.services.order_flow_service',       # 2.5.0
+        'app.services.risk_service',             # 2.5.0
+        'app.services.prediction_context',       # 2.5.0
         'app.model', 'app.model.market_score', 'app.model.capital_behavior',
         'app.strategy', 'app.strategy.trading_rules',
     ],
