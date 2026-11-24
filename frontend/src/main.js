@@ -9,6 +9,7 @@ import { renderMarketScores } from './render/ScoreCard.js';
 import { renderSignals } from './render/SignalCard.js';
 import { renderWatchlist } from './render/WatchlistCard.js';
 import { initOrderCard, renderOrders } from './render/OrderCard.js';
+import { renderPerformance } from './render/PerformanceCard.js';
 import { refreshOrders } from './stores/orderStore.js';
 import { initTabs } from './views/tabManager.js';
 
@@ -338,7 +339,10 @@ function init() {
   loadVersion();
   watchFrontendChanges();
   refresh();
+  renderPerformance();
   setInterval(refresh, CONFIG.refreshInterval);
+  // 绩效页数据变化慢，30 秒刷新即可
+  setInterval(renderPerformance, 30000);
   
   // 关闭时通知后端（热刷新/手动刷新时不通知，否则会把后端一起关掉）
   window.addEventListener('beforeunload', function() {

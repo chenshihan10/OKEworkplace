@@ -24,6 +24,11 @@ export function switchTab(tabName) {
   });
   
   setActiveTab(tabName);
+
+  // 绩效页打开时立即刷新，避免等下个 30 秒轮询
+  if (tabName === 'performance' && typeof window.__okeRefreshPerformance === 'function') {
+    window.__okeRefreshPerformance();
+  }
 }
 
 // 挂载到 window 供 HTML onclick 调用

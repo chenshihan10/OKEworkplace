@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import APP_VERSION
 from app.core.scheduler import start_scheduler, stop_scheduler
-from app.routes import coins, monitor, network, analysis, orders
+from app.routes import coins, monitor, network, analysis, orders, predictions
 from app.shutdown import shutdown_event
 
 # 兼容 PyInstaller 打包模式：打包后 frontend 在 _internal/frontend
@@ -42,6 +42,7 @@ app.include_router(monitor.router, prefix="/api/monitor", tags=["monitor"])
 app.include_router(network.router, prefix="/network", tags=["network"])
 app.include_router(analysis.router, prefix="/api", tags=["analysis"])
 app.include_router(orders.router, prefix="", tags=["orders"])
+app.include_router(predictions.router, prefix="/api", tags=["predictions"])
 
 
 @app.on_event("startup")
