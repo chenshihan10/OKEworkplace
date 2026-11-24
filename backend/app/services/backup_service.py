@@ -1,14 +1,29 @@
-"""V3.0 自动备份：SQLite 在线备份（signals.db / user_trades.db）+ 保留份数管理。"""
+"""V3.0 自动备份：SQLite 在线备份（signals.db / user_trades.db）+ 保留份数管理。
+
+触发策略（面向「一天开三五次、每次几十分钟」的使用方式）：
+- 每次启动，运行满 5 分钟后尝试一次；
+- 之后每 5 分钟检查一次，只有本次进程累计运行满 backup_runtime_hours 才允许再次备份；
+- 与上次成功备份相比数据没有新增（表最大 id / 页数未变）时跳过，避免整库重复拷贝；
+- 只保留最近 backup_keep 份（默认 3）。
+上次备份的数据签名落盘保存，重启后也能判断“没有实质变化”。
+"""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Dict, Optional
 
 from app.core.config import settings
 from app.services.db_store import SignalDB
+
+FIRST_RUN_MINUTES = 5
+
+# 用于判断“数据有没有实质变化”的表（按最大 id 与页数比较，代价很小）
+_SIGNAL_TABLES = ("signals", "signal_snapshots", "analysis_snapshots", "predictions", "prediction_results")
+_TRADE_TABLES = ("orders", "closed_orders", "risk_events")
 
 
 class BackupService:
@@ -18,7 +33,96 @@ class BackupService:
         self.backup_dir = settings.backup_dir or os.path.join(data_dir, "backups")
         os.makedirs(self.backup_dir, exist_ok=True)
         self.last_backup: Dict = {"at": None, "files": [], "removed": 0, "error": None}
+        self.last_check: Dict = {"at": None, "action": "idle", "reason": None, "uptime_hours": 0}
+        self._started_at = datetime.now(timezone.utc)
+        self._last_backup_uptime: Optional[float] = None
+        self._state_path = os.path.join(self.backup_dir, "backup_state.json")
+        self._state = self._read_state()
 
+    # ─── 运行时长与状态 ────────────────────────────────
+    def uptime_hours(self) -> float:
+        return (datetime.now(timezone.utc) - self._started_at).total_seconds() / 3600
+
+    def _read_state(self) -> Dict:
+        try:
+            with open(self._state_path, "r", encoding="utf-8") as f:
+                return json.load(f) or {}
+        except Exception:
+            return {}
+
+    def _write_state(self) -> None:
+        try:
+            tmp = self._state_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._state, f, ensure_ascii=False)
+            os.replace(tmp, self._state_path)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("backup state write failed: %s", exc)
+
+    def _data_signature(self) -> Dict:
+        """轻量数据签名：两张库的页数 + 各表最大 id，用于判断备份是否有必要。"""
+        signature: Dict = {}
+        for name, tables in (("signals.db", _SIGNAL_TABLES), ("user_trades.db", _TRADE_TABLES)):
+            path = os.path.join(self.data_dir, name)
+            if not os.path.exists(path):
+                signature[name] = None
+                continue
+            try:
+                conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+                try:
+                    pages = conn.execute("PRAGMA page_count").fetchone()[0]
+                    marks = []
+                    for table in tables:
+                        try:
+                            marks.append(conn.execute(
+                                f"SELECT COALESCE(MAX(id), 0) FROM {table}"
+                            ).fetchone()[0])
+                        except sqlite3.Error:
+                            marks.append(-1)
+                finally:
+                    conn.close()
+                signature[name] = [pages, *marks]
+            except sqlite3.Error:
+                signature[name] = "unreadable"
+        return signature
+
+    # ─── 触发判断 ──────────────────────────────────────
+    def maybe_backup(self) -> Dict:
+        """按运行时长与数据变化决定是否备份；返回本次检查结果。"""
+        now = datetime.now(timezone.utc)
+        uptime = self.uptime_hours()
+        base = {"at": now.isoformat(), "uptime_hours": round(uptime, 2)}
+
+        if uptime * 60 < FIRST_RUN_MINUTES:
+            return self._record({**base, "action": "skip", "reason": "waiting_first_run"})
+
+        if (self._last_backup_uptime is not None
+                and uptime - self._last_backup_uptime < settings.backup_runtime_hours):
+            return self._record({**base, "action": "skip", "reason": "interval"})
+
+        signature = self._data_signature()
+        previous = self._state.get("signature")
+        if previous is not None and signature == previous:
+            return self._record({**base, "action": "skip", "reason": "unchanged"})
+
+        result = self.create_backup()
+        if result.get("error") is None:
+            self._last_backup_uptime = uptime
+            self._state = {
+                "signature": signature,
+                "at": result["at"],
+                "files": result["files"],
+            }
+            self._write_state()
+            return self._record({**base, "action": "backup", "reason": "due",
+                                 "files": len(result["files"])})
+        return self._record({**base, "action": "failed", "reason": result["error"]})
+
+    def _record(self, check: Dict) -> Dict:
+        self.last_check = check
+        return check
+
+    # ─── 备份与清理 ────────────────────────────────────
     def _backup_one(self, name: str, stamp: str) -> str:
         src_path = os.path.join(self.data_dir, name)
         if not os.path.exists(src_path):
@@ -80,11 +184,17 @@ class BackupService:
         return self.last_backup
 
     def status(self) -> dict:
-        files = sorted(os.listdir(self.backup_dir)) if os.path.isdir(self.backup_dir) else []
+        files = sorted(
+            f for f in os.listdir(self.backup_dir)
+            if os.path.isfile(os.path.join(self.backup_dir, f)) and f.endswith(".db")
+        ) if os.path.isdir(self.backup_dir) else []
         return {
             "backup_dir": self.backup_dir,
             "keep": settings.backup_keep,
-            "interval_hours": settings.backup_interval_hours,
+            "runtime_hours": settings.backup_runtime_hours,
+            "first_run_minutes": FIRST_RUN_MINUTES,
+            "uptime_hours": round(self.uptime_hours(), 2),
+            "last_check": self.last_check,
             "last_backup": self.last_backup,
             "files": files[-20:],
         }

@@ -93,10 +93,10 @@ class Settings(BaseModel):
     verify_flat_threshold_pct: float = Field(default=0.1)
     verify_fee_rate: float = Field(default=0.0005)
     verify_slippage_rate: float = Field(default=0.0002)
-    # 自动备份
+    # 自动备份（按运行时长触发，非墙钟）
     backup_dir: str = Field(default="")
-    backup_keep: int = Field(default=7)
-    backup_interval_hours: int = Field(default=24)
+    backup_keep: int = Field(default=3)
+    backup_runtime_hours: int = Field(default=6)
 
 
 def build_settings() -> Settings:
@@ -141,8 +141,8 @@ def build_settings() -> Settings:
         verify_slippage_rate=float(os.getenv("OKE_VERIFY_SLIPPAGE_RATE", "0.0002")),
         # 自动备份
         backup_dir=os.getenv("OKE_BACKUP_DIR", ""),
-        backup_keep=int(os.getenv("OKE_BACKUP_KEEP", "7")),
-        backup_interval_hours=int(os.getenv("OKE_BACKUP_INTERVAL_HOURS", "24")),
+        backup_keep=int(os.getenv("OKE_BACKUP_KEEP", "3")),
+        backup_runtime_hours=int(os.getenv("OKE_BACKUP_RUNTIME_HOURS", "6")),
     )
 
 

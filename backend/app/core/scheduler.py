@@ -57,15 +57,14 @@ def start_scheduler() -> None:
         coalesce=True,
         next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
     )
-    # 自动备份：启动 5 分钟后首跑，之后按间隔执行
+    # 自动备份：每 5 分钟检查一次；运行满 5 分钟首跑，之后按累计运行时长触发，数据无变化则跳过
     scheduler.add_job(
-        backup_service.create_backup,
+        backup_service.maybe_backup,
         "interval",
-        hours=settings.backup_interval_hours,
+        minutes=5,
         id="auto_backup",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
-        next_run_time=datetime.now(timezone.utc) + timedelta(minutes=5),
     )
     scheduler.start()
