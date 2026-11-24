@@ -15,6 +15,7 @@ from app.services.db_store import SignalDB
 from app.models import WatchItem
 from app.services.oke_client import OKEClient
 from app.services.signal_engine import signal_engine
+from app.services.prediction_logger import prediction_logger
 
 # 持久化文件路径
 if getattr(sys, 'frozen', False):
@@ -193,9 +194,21 @@ class MarketService:
         self._prev_cvd[item.symbol] = cvd
         self._last_success_at = datetime.now(timezone.utc)
 
-        # v2.2：保存信号到 SQLite
+        # V3.0：有方向的判断按节流规则留档（同一币种同方向默认 30 分钟一条）
         try:
-            self._db.save_signal(item.symbol, signal)
+            prediction_logger.maybe_log(item.symbol, signal, ticker.get("price"))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to save prediction: %s", e)
+
+        # v2.2：保存信号到 SQLite（判断变化才落行，原始快照压缩降采样）
+        try:
+            self._db.save_signal_sampled(
+                item.symbol, signal,
+                score_delta=settings.signal_score_delta,
+                heartbeat_minutes=settings.signal_heartbeat_minutes,
+                snapshot_minutes=settings.raw_snapshot_minutes,
+            )
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning("Failed to save signal to DB: %s", e)

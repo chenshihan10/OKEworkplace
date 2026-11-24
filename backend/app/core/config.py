@@ -53,6 +53,25 @@ class Settings(BaseModel):
     data_grace_seconds: int = Field(default=15)      # 数据年龄在此范围内仍视为可用
     data_stale_seconds: int = Field(default=60)      # 超过此秒数无更新才提示“停止更新”
     data_boot_check_seconds: int = Field(default=10)  # 启动后等待首笔数据的宽限时间
+    # V3.0：Prediction Logger 节流（同一币种同方向的最小记录间隔）
+    prediction_min_interval_minutes: int = Field(default=30)
+    # signals 写入策略（减少重复快照）
+    signal_score_delta: int = Field(default=5)
+    signal_heartbeat_minutes: int = Field(default=5)
+    raw_snapshot_minutes: int = Field(default=5)
+    # 数据维护：signals 保留策略（分批删除，避免长时间锁库）
+    signal_retention_days: int = Field(default=7)
+    signal_cleanup_batch_size: int = Field(default=500)
+    signal_cleanup_interval_minutes: int = Field(default=60)
+    # Future Validator 回验
+    verify_interval_seconds: int = Field(default=60)
+    verify_flat_threshold_pct: float = Field(default=0.1)
+    verify_fee_rate: float = Field(default=0.0005)
+    verify_slippage_rate: float = Field(default=0.0002)
+    # 自动备份
+    backup_dir: str = Field(default="")
+    backup_keep: int = Field(default=7)
+    backup_interval_hours: int = Field(default=24)
 
 
 def build_settings() -> Settings:
@@ -81,6 +100,24 @@ def build_settings() -> Settings:
         data_grace_seconds=int(os.getenv("OKE_DATA_GRACE_SECONDS", "15")),
         data_stale_seconds=int(os.getenv("OKE_DATA_STALE_SECONDS", "60")),
         data_boot_check_seconds=int(os.getenv("OKE_DATA_BOOT_CHECK_SECONDS", "10")),
+        # V3.0 Prediction Logger
+        prediction_min_interval_minutes=int(os.getenv("OKE_PREDICTION_MIN_INTERVAL_MINUTES", "30")),
+        # 数据维护（signals 保留策略）
+        signal_score_delta=int(os.getenv("OKE_SIGNAL_SCORE_DELTA", "5")),
+        signal_heartbeat_minutes=int(os.getenv("OKE_SIGNAL_HEARTBEAT_MINUTES", "5")),
+        raw_snapshot_minutes=int(os.getenv("OKE_RAW_SNAPSHOT_MINUTES", "5")),
+        signal_retention_days=int(os.getenv("OKE_SIGNAL_RETENTION_DAYS", "7")),
+        signal_cleanup_batch_size=int(os.getenv("OKE_SIGNAL_CLEANUP_BATCH_SIZE", "500")),
+        signal_cleanup_interval_minutes=int(os.getenv("OKE_SIGNAL_CLEANUP_INTERVAL_MINUTES", "60")),
+        # Future Validator
+        verify_interval_seconds=int(os.getenv("OKE_VERIFY_INTERVAL_SECONDS", "60")),
+        verify_flat_threshold_pct=float(os.getenv("OKE_VERIFY_FLAT_THRESHOLD_PCT", "0.1")),
+        verify_fee_rate=float(os.getenv("OKE_VERIFY_FEE_RATE", "0.0005")),
+        verify_slippage_rate=float(os.getenv("OKE_VERIFY_SLIPPAGE_RATE", "0.0002")),
+        # 自动备份
+        backup_dir=os.getenv("OKE_BACKUP_DIR", ""),
+        backup_keep=int(os.getenv("OKE_BACKUP_KEEP", "7")),
+        backup_interval_hours=int(os.getenv("OKE_BACKUP_INTERVAL_HOURS", "24")),
     )
 
 
