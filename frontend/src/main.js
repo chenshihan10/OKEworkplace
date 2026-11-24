@@ -14,7 +14,7 @@ import { refreshMtf, getMtfItems } from './stores/mtfStore.js';
 import { renderMtf } from './render/MtfCard.js';
 import { refreshOrderflow } from './stores/flowStore.js';
 import { renderOrderflow } from './render/OrderFlowCard.js';
-import { refreshOrders } from './stores/orderStore.js';
+import { refreshOrders, getRiskSettings, fetchRiskSettings, saveRiskSettings } from './stores/orderStore.js';
 import { initTabs } from './views/tabManager.js';
 
 const CONFIG = {
@@ -250,8 +250,11 @@ window.__openOrderModal = function(symbol, price) {
   document.getElementById('modal-price').value = price || 0;
   document.getElementById('modal-quantity').value = '';
   document.getElementById('modal-note').value = '';
+  document.getElementById('modal-stop-loss').value = '';
+  document.getElementById('modal-take-profit').value = '';
   _modalDirection = 'LONG';
   _updateModalDirectionBtn();
+  _updateSuggestedQty();
   document.getElementById('order-modal').style.display = 'flex';
 };
 
@@ -274,6 +277,27 @@ function _updateModalDirectionBtn() {
     longBtn.style.background = '#334155';
     longBtn.style.color = '#94a3b8';
   }
+  _updateSuggestedQty();
+}
+
+// 建议数量 = 权益 × 单笔风险% / |开仓价 - 止损价|（仅提示，不自动填数量）
+function _updateSuggestedQty() {
+  const target = document.getElementById('modal-suggested');
+  if (!target) return;
+  const settings = getRiskSettings() || {};
+  const equity = Number(settings.equity);
+  const riskPct = Number(settings.risk_per_trade_pct || 1);
+  const entry = parseFloat(document.getElementById('modal-price')?.value);
+  const sl = parseFloat(document.getElementById('modal-stop-loss')?.value);
+
+  if (!equity || !entry || !sl || entry <= 0 || entry === sl) {
+    target.textContent = settings.equity
+      ? '建议数量：填写开仓价与止损价后显示'
+      : '建议数量：请先在「风险设置」配置账户权益';
+    return;
+  }
+  const qty = equity * riskPct / 100 / Math.abs(entry - sl);
+  target.textContent = `建议数量：${qty.toFixed(6)}（按单笔风险 ${riskPct}%，仅提示）`;
 }
 
 document.addEventListener('click', function(e) {
@@ -285,7 +309,14 @@ document.addEventListener('click', function(e) {
     _updateModalDirectionBtn();
   } else if (e.target.id === 'modal-confirm') {
     _submitOrder();
+  } else if (e.target.id === 'risk-confirm') {
+    _saveRiskModal();
   }
+});
+
+// 开仓价 / 止损价变化时实时更新建议数量
+['modal-price', 'modal-stop-loss'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', _updateSuggestedQty);
 });
 
 async function _submitOrder() {
@@ -293,6 +324,8 @@ async function _submitOrder() {
   const price = parseFloat(document.getElementById('modal-price').value);
   const quantity = parseFloat(document.getElementById('modal-quantity').value) || 0;
   const note = document.getElementById('modal-note').value;
+  const stopLoss = document.getElementById('modal-stop-loss').value;
+  const takeProfit = document.getElementById('modal-take-profit').value;
 
   if (!symbol || !price || price <= 0) {
     alert('请输入有效的价格');
@@ -301,7 +334,7 @@ async function _submitOrder() {
 
   try {
     const { createOrder } = await import('./stores/orderStore.js');
-    await createOrder(symbol, _modalDirection, price, quantity, note);
+    await createOrder(symbol, _modalDirection, price, quantity, note, stopLoss, takeProfit);
     closeOrderModal();
     // 通知订单模块刷新
     const { refreshOrders } = await import('./stores/orderStore.js');
@@ -310,6 +343,52 @@ async function _submitOrder() {
     renderOrders();
   } catch (e) {
     alert(`开单失败: ${e.message}`);
+  }
+}
+
+// ============================================================
+// 风险设置模态框
+// ============================================================
+async function _openRiskModal() {
+  try {
+    const settings = await fetchRiskSettings();
+    document.getElementById('risk-equity').value = settings.equity ?? '';
+    document.getElementById('risk-per-trade').value = settings.risk_per_trade_pct ?? 1;
+    document.getElementById('risk-portfolio').value = settings.max_portfolio_risk_pct ?? 6;
+    document.getElementById('risk-concentration').value = settings.max_symbol_concentration_pct ?? 50;
+  } catch (e) {
+    // 读取失败也允许填写后保存
+  }
+  document.getElementById('risk-modal').style.display = 'flex';
+}
+window.__openRiskModal = _openRiskModal;
+
+function closeRiskModal() {
+  document.getElementById('risk-modal').style.display = 'none';
+}
+window.closeRiskModal = closeRiskModal;
+
+async function _saveRiskModal() {
+  const equityText = document.getElementById('risk-equity').value.trim();
+  const equity = equityText === '' ? null : Number(equityText);
+  const payload = {
+    equity,
+    risk_per_trade_pct: Number(document.getElementById('risk-per-trade').value) || 1,
+    max_portfolio_risk_pct: Number(document.getElementById('risk-portfolio').value) || 6,
+    max_symbol_concentration_pct: Number(document.getElementById('risk-concentration').value) || 50,
+  };
+  if (equity !== null && (!Number.isFinite(equity) || equity <= 0)) {
+    alert('账户权益必须大于 0，留空表示未配置');
+    return;
+  }
+  try {
+    await saveRiskSettings(payload);
+    closeRiskModal();
+    const { renderOrders } = await import('./render/OrderCard.js');
+    renderOrders();
+    _updateSuggestedQty();
+  } catch (e) {
+    alert(`保存失败: ${e.message}`);
   }
 }
 
