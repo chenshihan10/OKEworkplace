@@ -7,7 +7,32 @@ from dotenv import load_dotenv
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-load_dotenv(BASE_DIR / ".env")
+
+
+def _env_candidates() -> list[Path]:
+    """配置读取顺序：exe 同级 .env 优先，找不到再回退包内 .env（开发模式为 backend/.env）。
+
+    这样重新打包后只需把 Key 放在 exe 同级，不必每次替换包内配置；
+    直接跑 uvicorn 时没有 exe，仍按 backend/.env 读取。
+    """
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / ".env")
+    candidates.append(BASE_DIR / ".env")
+    return list(dict.fromkeys(candidates))
+
+
+def _load_env_files() -> list[Path]:
+    # override=False：先加载的文件优先，后加载的只补缺失项
+    loaded: list[Path] = []
+    for path in _env_candidates():
+        if path.is_file():
+            load_dotenv(path, override=False)
+            loaded.append(path)
+    return loaded
+
+
+ENV_FILES = _load_env_files()
 
 # 版本单一真源：仓库根目录 VERSION 文件
 # 开发模式 backend/app/core/config.py → BASE_DIR=backend，向上一级取仓库根
