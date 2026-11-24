@@ -12,6 +12,8 @@ import { initOrderCard, renderOrders } from './render/OrderCard.js';
 import { renderPerformance } from './render/PerformanceCard.js';
 import { refreshMtf, getMtfItems } from './stores/mtfStore.js';
 import { renderMtf } from './render/MtfCard.js';
+import { refreshOrderflow } from './stores/flowStore.js';
+import { renderOrderflow } from './render/OrderFlowCard.js';
 import { refreshOrders } from './stores/orderStore.js';
 import { initTabs } from './views/tabManager.js';
 
@@ -342,6 +344,12 @@ function init() {
   window.__okeRefreshMtf = refreshMtfView;
   refreshMtfView();
   setInterval(refreshMtfView, 10000);
+
+  // 订单流：后端 10 秒采样一轮，前端同步 10 秒轮询
+  const refreshOrderflowView = () => refreshOrderflow().then(renderOrderflow).catch(() => {});
+  window.__okeRefreshOrderflow = refreshOrderflowView;
+  refreshOrderflowView();
+  setInterval(refreshOrderflowView, 10000);
   
   // 添加呼吸动画
   const style = document.createElement('style');

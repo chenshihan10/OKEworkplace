@@ -94,6 +94,24 @@ class SignalDB:
                 payload_z_bytes INTEGER NOT NULL,
                 payload_z BLOB NOT NULL
             )''')
+            # V3.0 订单流采样：不是每 5 秒写，按配置间隔（默认 5 分钟）一条
+            conn.execute('''CREATE TABLE IF NOT EXISTS order_flow_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                window_minutes INTEGER NOT NULL,
+                buy_volume REAL,
+                sell_volume REAL,
+                delta REAL,
+                delta_ratio REAL,
+                session_cvd REAL,
+                large_buy REAL,
+                large_sell REAL,
+                book_imbalance REAL,
+                flow_bias REAL,
+                quality TEXT,
+                payload_z BLOB
+            )''')
             # V3.0：回验字段（增量迁移，兼容旧库）
             self._migrate_predictions(conn)
             conn.execute('''CREATE TABLE IF NOT EXISTS prediction_results (
@@ -149,6 +167,7 @@ class SignalDB:
         conn.execute('''CREATE INDEX IF NOT EXISTS idx_pred_results_status ON prediction_results(verify_status)''')
         conn.execute('''CREATE INDEX IF NOT EXISTS idx_pred_results_horizon ON prediction_results(horizon)''')
         conn.execute('''CREATE INDEX IF NOT EXISTS idx_signal_snapshots_symbol_time ON signal_snapshots(symbol, created_at)''')
+        conn.execute('''CREATE INDEX IF NOT EXISTS idx_orderflow_symbol_time ON order_flow_snapshots(symbol, created_at)''')
 
     def save_signal(self, symbol: str, signal_data: dict) -> int:
         """保存信号到数据库，返回 ID"""
@@ -302,6 +321,65 @@ class SignalDB:
                  trend_phase)
             )
             return cursor.lastrowid
+
+    # ─── 订单流采样 ───────────────────────────────────────
+
+    def save_order_flow_snapshot(self, symbol: str, window_minutes: int, data: dict,
+                                 payload: Optional[dict] = None) -> int:
+        """写入一条订单流采样（默认 5 分钟一条，不是实时逐笔）。"""
+        now = datetime.now(timezone.utc).isoformat()
+        payload_z = None
+        if payload is not None:
+            payload_z = zlib.compress(
+                json.dumps(payload, ensure_ascii=False, default=str).encode('utf-8'), 6
+            )
+        with self._connect() as conn:
+            cursor = conn.execute(
+                '''INSERT INTO order_flow_snapshots
+                   (symbol, created_at, window_minutes, buy_volume, sell_volume, delta,
+                    delta_ratio, session_cvd, large_buy, large_sell, book_imbalance,
+                    flow_bias, quality, payload_z)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (symbol, now, window_minutes,
+                 data.get('buy_volume'), data.get('sell_volume'), data.get('delta'),
+                 data.get('delta_ratio'), data.get('session_cvd'),
+                 data.get('large_buy'), data.get('large_sell'), data.get('book_imbalance'),
+                 data.get('flow_bias'), json.dumps(data.get('quality') or {}, ensure_ascii=False),
+                 payload_z),
+            )
+            return cursor.lastrowid
+
+    def query_order_flow_snapshots(self, symbol: Optional[str] = None,
+                                   start: Optional[str] = None, end: Optional[str] = None,
+                                   limit: int = 200) -> List[Dict]:
+        where = []
+        params: List = []
+        if symbol:
+            where.append("symbol = ?")
+            params.append(symbol)
+        if start:
+            where.append("created_at >= ?")
+            params.append(start)
+        if end:
+            where.append("created_at <= ?")
+            params.append(end)
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                f"SELECT * FROM order_flow_snapshots{where_sql} ORDER BY id DESC LIMIT ?",
+                params + [max(1, min(int(limit or 200), 1000))],
+            ).fetchall()
+        items = []
+        for row in rows:
+            d = dict(row)
+            d.pop('payload_z', None)
+            try:
+                d['quality'] = json.loads(d['quality']) if d.get('quality') else {}
+            except (json.JSONDecodeError, TypeError):
+                d['quality'] = {}
+            items.append(d)
+        return items
 
     def get_recent_signals(self, symbol: str, limit: int = 50) -> List[Dict]:
         """获取最近的信号历史"""

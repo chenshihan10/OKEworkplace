@@ -101,6 +101,13 @@ class Settings(BaseModel):
     mtf_enabled: bool = Field(default=True)
     mtf_interval_seconds: int = Field(default=60)
     mtf_timeframes: list = Field(default_factory=lambda: ["15m", "1H", "4H"])
+    # 订单流 REST 采样（v1 不做 WebSocket）
+    orderflow_enabled: bool = Field(default=True)
+    orderflow_interval_seconds: int = Field(default=10)
+    orderflow_window_minutes: int = Field(default=5)
+    orderflow_large_trade_notional: float = Field(default=50000.0)
+    orderflow_books_sz: int = Field(default=400)
+    orderflow_snapshot_minutes: int = Field(default=5)
 
 
 def build_settings() -> Settings:
@@ -151,6 +158,13 @@ def build_settings() -> Settings:
         mtf_enabled=os.getenv("OKE_MTF_ENABLED", "true").lower() == "true",
         mtf_interval_seconds=int(os.getenv("OKE_MTF_INTERVAL_SECONDS", "60")),
         mtf_timeframes=[x.strip() for x in os.getenv("OKE_MTF_TIMEFRAMES", "15m,1H,4H").split(",") if x.strip()],
+        # 订单流
+        orderflow_enabled=os.getenv("OKE_ORDERFLOW_ENABLED", "true").lower() == "true",
+        orderflow_interval_seconds=int(os.getenv("OKE_ORDERFLOW_INTERVAL_SECONDS", "10")),
+        orderflow_window_minutes=int(os.getenv("OKE_ORDERFLOW_WINDOW_MINUTES", "5")),
+        orderflow_large_trade_notional=float(os.getenv("OKE_ORDERFLOW_LARGE_TRADE_NOTIONAL", "50000")),
+        orderflow_books_sz=int(os.getenv("OKE_ORDERFLOW_BOOKS_SZ", "400")),
+        orderflow_snapshot_minutes=int(os.getenv("OKE_ORDERFLOW_SNAPSHOT_MINUTES", "5")),
     )
 
 

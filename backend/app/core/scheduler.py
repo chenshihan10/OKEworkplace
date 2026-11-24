@@ -9,6 +9,7 @@ from app.services.future_validator import future_validator
 from app.services.maintenance_service import maintenance_service
 from app.services.market_service import market_service
 from app.services.multi_timeframe_service import multi_timeframe_service
+from app.services.order_flow_service import order_flow_service
 
 
 scheduler = BackgroundScheduler()
@@ -69,6 +70,29 @@ def start_scheduler() -> None:
             max_instances=1,
             coalesce=True,
             next_run_time=datetime.now(timezone.utc) + timedelta(seconds=10),
+        )
+    # 订单流 REST 采样：全部关注币种统一 10 秒一轮
+    if settings.orderflow_enabled:
+        scheduler.add_job(
+            order_flow_service.refresh_all,
+            "interval",
+            seconds=settings.orderflow_interval_seconds,
+            id="orderflow_refresh",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=15),
+        )
+        # 采样落库：默认 5 分钟一条，避免每 10 秒写库
+        scheduler.add_job(
+            order_flow_service.persist_snapshots,
+            "interval",
+            minutes=settings.orderflow_snapshot_minutes,
+            id="orderflow_snapshot",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc) + timedelta(minutes=1),
         )
     # 自动备份：每 5 分钟检查一次；运行满 5 分钟首跑，之后按累计运行时长触发，数据无变化则跳过
     scheduler.add_job(

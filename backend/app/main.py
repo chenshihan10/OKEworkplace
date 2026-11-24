@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import APP_VERSION
 from app.core.scheduler import start_scheduler, stop_scheduler
 from app.routes import (
-    coins, monitor, network, analysis, orders, predictions, mtf,
+    coins, monitor, network, analysis, orders, predictions, mtf, orderflow,
 )
 from app.shutdown import shutdown_event
 
@@ -74,6 +74,7 @@ app.include_router(network.router, prefix="/network", tags=["network"])
 app.include_router(analysis.router, prefix="/api", tags=["analysis"])
 app.include_router(orders.router, prefix="", tags=["orders"])
 app.include_router(mtf.router, prefix="", tags=["mtf"])
+app.include_router(orderflow.router, prefix="", tags=["orderflow"])
 app.include_router(predictions.router, prefix="/api", tags=["predictions"])
 
 

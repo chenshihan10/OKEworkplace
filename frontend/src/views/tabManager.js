@@ -34,6 +34,11 @@ export function switchTab(tabName) {
   if (tabName === 'mtf' && typeof window.__okeRefreshMtf === 'function') {
     window.__okeRefreshMtf();
   }
+
+  // 订单流页打开时立即拉一次缓存
+  if (tabName === 'flow' && typeof window.__okeRefreshOrderflow === 'function') {
+    window.__okeRefreshOrderflow();
+  }
 }
 
 // 挂载到 window 供 HTML onclick 调用
