@@ -10,6 +10,8 @@ import { renderSignals } from './render/SignalCard.js';
 import { renderWatchlist } from './render/WatchlistCard.js';
 import { initOrderCard, renderOrders } from './render/OrderCard.js';
 import { renderPerformance } from './render/PerformanceCard.js';
+import { refreshMtf, getMtfItems } from './stores/mtfStore.js';
+import { renderMtf } from './render/MtfCard.js';
 import { refreshOrders } from './stores/orderStore.js';
 import { initTabs } from './views/tabManager.js';
 
@@ -131,7 +133,7 @@ function renderSnapshot(data) {
   const signals = getSignals();
   const items = data.watch_items || [];
 
-  renderMarketCards(items, prices, signals);
+  renderMarketCards(items, prices, signals, getMtfItems());
   renderMarketScores(items);
   renderSignals(signals);
   renderWatchlist(items, prices, signals);
@@ -329,6 +331,17 @@ function init() {
   
   // 初始化标签页
   initTabs();
+
+  // 多周期：后端 60 秒一轮，前端 10 秒轮询只读缓存
+  const refreshMtfView = () => refreshMtf().then(() => {
+    renderMtf();
+    // 概览卡片也带多周期徽标，数据到达后立即重绘一次
+    const snap = getSnapshot();
+    if (snap) renderSnapshot(snap);
+  }).catch(() => {});
+  window.__okeRefreshMtf = refreshMtfView;
+  refreshMtfView();
+  setInterval(refreshMtfView, 10000);
   
   // 添加呼吸动画
   const style = document.createElement('style');

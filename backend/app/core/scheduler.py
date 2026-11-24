@@ -8,6 +8,7 @@ from app.services.backup_service import backup_service
 from app.services.future_validator import future_validator
 from app.services.maintenance_service import maintenance_service
 from app.services.market_service import market_service
+from app.services.multi_timeframe_service import multi_timeframe_service
 
 
 scheduler = BackgroundScheduler()
@@ -57,6 +58,18 @@ def start_scheduler() -> None:
         coalesce=True,
         next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
     )
+    # 多周期旁路：独立线程池与节奏，不挤占 5 秒主循环
+    if settings.mtf_enabled:
+        scheduler.add_job(
+            multi_timeframe_service.refresh_all,
+            "interval",
+            seconds=settings.mtf_interval_seconds,
+            id="mtf_refresh",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=10),
+        )
     # 自动备份：每 5 分钟检查一次；运行满 5 分钟首跑，之后按累计运行时长触发，数据无变化则跳过
     scheduler.add_job(
         backup_service.maybe_backup,

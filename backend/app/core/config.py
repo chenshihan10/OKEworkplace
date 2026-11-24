@@ -97,6 +97,10 @@ class Settings(BaseModel):
     backup_dir: str = Field(default="")
     backup_keep: int = Field(default=3)
     backup_runtime_hours: int = Field(default=6)
+    # 多周期旁路（不改变主周期评分与方向）
+    mtf_enabled: bool = Field(default=True)
+    mtf_interval_seconds: int = Field(default=60)
+    mtf_timeframes: list = Field(default_factory=lambda: ["15m", "1H", "4H"])
 
 
 def build_settings() -> Settings:
@@ -143,6 +147,10 @@ def build_settings() -> Settings:
         backup_dir=os.getenv("OKE_BACKUP_DIR", ""),
         backup_keep=int(os.getenv("OKE_BACKUP_KEEP", "3")),
         backup_runtime_hours=int(os.getenv("OKE_BACKUP_RUNTIME_HOURS", "6")),
+        # 多周期
+        mtf_enabled=os.getenv("OKE_MTF_ENABLED", "true").lower() == "true",
+        mtf_interval_seconds=int(os.getenv("OKE_MTF_INTERVAL_SECONDS", "60")),
+        mtf_timeframes=[x.strip() for x in os.getenv("OKE_MTF_TIMEFRAMES", "15m,1H,4H").split(",") if x.strip()],
     )
 
 

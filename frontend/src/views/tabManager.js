@@ -29,6 +29,11 @@ export function switchTab(tabName) {
   if (tabName === 'performance' && typeof window.__okeRefreshPerformance === 'function') {
     window.__okeRefreshPerformance();
   }
+
+  // 多周期页打开时立即拉一次缓存
+  if (tabName === 'mtf' && typeof window.__okeRefreshMtf === 'function') {
+    window.__okeRefreshMtf();
+  }
 }
 
 // 挂载到 window 供 HTML onclick 调用
