@@ -80,6 +80,8 @@ class MarketService:
         self._started_at = datetime.now(timezone.utc)
         # 最近一次成功取数时间：网络状态与“数据停更”判断以此为准
         self._last_success_at = None
+        # 最近一次取数异常（诊断用；成功后清空）
+        self.last_error = None
         self._client = OKEClient(settings.oke_base_url, settings.oke_api_key, settings.oke_secret_key)
         self._executor = ThreadPoolExecutor(max_workers=10)
         # 单币种内部 8 个行情接口并行拉取，避免串行耗时超过 5 秒轮询周期
@@ -231,7 +233,9 @@ class MarketService:
             item = futures[future]
             try:
                 future.result()
+                self.last_error = None
             except Exception as e:
+                self.last_error = f"{item.symbol}: {type(e).__name__}: {e}"
                 import logging
                 logging.getLogger(__name__).error(
                     "Refresh failed for %s: %s", item.symbol, e
@@ -252,6 +256,7 @@ class MarketService:
             # updated_at 表示“数据实际更新时间”，长时间取数失败时不会假装更新
             "updated_at": (last_success or self._started_at).isoformat(),
             "last_success_at": last_success.isoformat() if last_success else None,
+            "last_error": self.last_error,
             "watch_items": [item.dict() for item in self._watch_items],
             "prices": self._latest_prices,
             "signals": signals_for_frontend,
