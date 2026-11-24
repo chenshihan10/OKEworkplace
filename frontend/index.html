@@ -1,6 +1,22 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
+  <script>
+    // 本地 API token：由桌面壳注入页面 URL，写请求自动携带同源 token
+    (function () {
+      var token = new URLSearchParams(window.location.search).get('token') || '';
+      window.__OKE_TOKEN = token;
+      if (!token) return;
+      var nativeFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        init = init || {};
+        var headers = new Headers(init.headers || {});
+        if (!headers.has('X-OKE-Token')) headers.set('X-OKE-Token', token);
+        init.headers = headers;
+        return nativeFetch(input, init);
+      };
+    })();
+  </script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>量化分析终端 - OKEworkplace</title>

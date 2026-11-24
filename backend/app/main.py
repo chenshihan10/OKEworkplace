@@ -3,10 +3,11 @@ import signal
 import sys
 import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import APP_VERSION
@@ -24,18 +25,46 @@ else:
     FRONTEND_DIR = _this_file.parents[2] / "frontend"
 
 # 正式部署（Web）时通过环境变量关闭进程自杀接口，避免服务被任意访问者关停
-ENABLE_SHUTDOWN = os.getenv("OKE_ENABLE_SHUTDOWN", "true").lower() == "true"
+IS_DESKTOP = os.getenv("OKE_DESKTOP", "0") == "1"
+ENABLE_SHUTDOWN = os.getenv(
+    "OKE_ENABLE_SHUTDOWN", "true" if IS_DESKTOP else "false"
+).lower() == "true"
+LOCAL_TOKEN = os.getenv("OKE_LOCAL_TOKEN", "")
+ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 app = FastAPI(title="OKEworkplace API", version=APP_VERSION)
 
-# ⚡ 彻底推开跨域大门：显式允许所有源、所有方法、所有头部
+# 只允许本机来源：防止任意网站跨域读取/操纵本地接口
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def local_api_guard(request: Request, call_next):
+    """本地接口最小加固：Host/Origin 白名单 + 写操作 token。"""
+    host = request.headers.get("host", "")
+    hostname = host.rsplit(":", 1)[0].strip("[]") if host else ""
+    if hostname and hostname not in ALLOWED_HOSTS:
+        return JSONResponse({"detail": "forbidden host"}, status_code=403)
+
+    origin = request.headers.get("origin")
+    if origin:
+        parsed = urlparse(origin)
+        if parsed.hostname not in ALLOWED_HOSTS:
+            return JSONResponse({"detail": "forbidden origin"}, status_code=403)
+
+    # token 由桌面壳生成并通过页面 URL 注入；未配置时（例如直接 uvicorn 调试）跳过
+    if LOCAL_TOKEN and request.method not in ("GET", "HEAD", "OPTIONS"):
+        token = request.headers.get("x-oke-token") or request.query_params.get("token")
+        if token != LOCAL_TOKEN:
+            return JSONResponse({"detail": "invalid local token"}, status_code=403)
+
+    return await call_next(request)
+
 
 app.include_router(coins.router, prefix="/api/coins", tags=["coins"])
 app.include_router(monitor.router, prefix="/api/monitor", tags=["monitor"])

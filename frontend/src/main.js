@@ -347,7 +347,8 @@ function init() {
   // 关闭时通知后端（热刷新/手动刷新时不通知，否则会把后端一起关掉）
   window.addEventListener('beforeunload', function() {
     if (window.__okeReloading) return;
-    navigator.sendBeacon(`${apiBase}/api/shutdown`, '{}');
+    const token = window.__OKE_TOKEN || '';
+    navigator.sendBeacon(`${apiBase}/api/shutdown?token=${encodeURIComponent(token)}`, '{}');
   });
   
   console.log(`行情终端已启动 [刷新: ${CONFIG.refreshInterval}ms, 分析: ${CONFIG.analysisInterval}ms]`);

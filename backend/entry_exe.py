@@ -1,12 +1,14 @@
-"""PyInstaller EXE entry point - starts server and opens GUI window with tray icon"""
+﻿"""PyInstaller EXE entry point - starts server and opens GUI window with tray icon"""
 import sys
 import os
 import io
 import threading
 import time
 import urllib.request
+import urllib.parse
 import json
 import signal
+import secrets
 import socket
 import ctypes
 import traceback
@@ -36,7 +38,20 @@ from app.core.config import APP_VERSION
 
 APP_TITLE = f"OKEworkplace v{APP_VERSION} - 交易分析终端"
 # 开发模式给页面带 dev=1 参数，前端据此启用文件变更自动刷新；打包版不带，零开销
-DEV_QUERY = "" if getattr(sys, "frozen", False) else "?dev=1"
+# 开发模式给页面带 dev=1 参数，前端据此启用文件变更自动刷新；打包版不带
+_DEV_QUERY = "" if getattr(sys, "frozen", False) else "dev=1"
+
+# 本地接口加固：桌面模式标记 + 每次启动生成一次性 token
+# 必须在 app.main 导入（服务器线程）之前写入环境变量
+LOCAL_TOKEN = os.environ.get("OKE_LOCAL_TOKEN") or secrets.token_urlsafe(18)
+os.environ["OKE_LOCAL_TOKEN"] = LOCAL_TOKEN
+os.environ.setdefault("OKE_DESKTOP", "1")
+
+
+def _page_query() -> str:
+    """页面查询串：开发模式标记 + 本地 API token"""
+    parts = [p for p in (_DEV_QUERY, "token=" + urllib.parse.quote(LOCAL_TOKEN)) if p]
+    return "?" + "&".join(parts)
 
 # 错误日志文件（用于诊断无法启动的问题）
 _LOG_DIR = _backend_dir if not getattr(sys, 'frozen', False) else Path.cwd()
@@ -187,7 +202,7 @@ def _open_gui_window(port):
 
         window = webview.create_window(
             title=APP_TITLE,
-            url=f"http://{HOST}:{port}/index.html{DEV_QUERY}",
+            url=f"http://{HOST}:{port}/index.html{_page_query()}",
             width=1280,
             height=800,
             min_size=(960, 600),
@@ -231,7 +246,7 @@ def _open_gui_window(port):
 def _open_browser(port):
     """打开系统默认浏览器（回退方案）"""
     import webbrowser
-    url = f"http://{HOST}:{port}/index.html{DEV_QUERY}"
+    url = f"http://{HOST}:{port}/index.html{_page_query()}"
     try:
         webbrowser.open(url)
     except Exception as e:
