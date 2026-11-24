@@ -17,7 +17,7 @@ for pkg in ['requests', 'fastapi', 'uvicorn', 'apscheduler', 'webview', 'certifi
 datas += [
     ('..\\frontend', 'frontend'),
     ('..\\VERSION', '.'),
-    ('.env', '.'),
+    ('.env.example', '.'),  # 只打包示例配置，真实 .env 不随产物分发
 ]
 
 block_cipher = None
@@ -47,6 +47,7 @@ a = Analysis(
         'app.core', 'app.core.config', 'app.core.scheduler',
         'app.routes', 'app.routes.coins', 'app.routes.monitor',
         'app.routes.analysis', 'app.routes.network', 'app.routes.orders',
+        'app.routes.predictions',          # V3.0
         'app.services', 'app.services.market_service',
         'app.services.oke_client', 'app.services.signal_engine',
         'app.services.indicator_service', 'app.services.network_service',
@@ -56,6 +57,11 @@ a = Analysis(
         'app.services.db_store',           # v2.2
         'app.services.event_bus',          # v2.2
         'app.services.order_manager',      # v2.3
+        'app.services.market_regime',      # V3.0
+        'app.services.prediction_logger',  # V3.0
+        'app.services.future_validator',   # V3.0
+        'app.services.maintenance_service', # V3.0
+        'app.services.backup_service',     # V3.0
         'app.model', 'app.model.market_score', 'app.model.capital_behavior',
         'app.strategy', 'app.strategy.trading_rules',
     ],
