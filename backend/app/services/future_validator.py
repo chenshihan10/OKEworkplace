@@ -142,9 +142,26 @@ class FutureValidator:
 
         tf_minutes = self._timeframe_minutes(timeframe)
         if parsed[0][0] > created:
-            return self._save(pred, horizon, "insufficient_data",
-                              note="K 线窗口未覆盖预测时间（可能停机过久）",
-                              data_quality="incomplete")
+            # 停机超过最近 100 根 K 线时，向前翻页回补到期区间，而不是直接判数据不足
+            try:
+                backfill = self._client.fetch_candles_range(
+                    symbol, timeframe,
+                    int((created - timedelta(minutes=tf_minutes)).timestamp() * 1000),
+                    int(due.timestamp() * 1000),
+                )
+            except Exception as exc:
+                return self._save(pred, horizon, "failed", note=f"历史行情获取失败：{exc}")
+            if backfill:
+                merged = {ts: c for ts, c in parsed}
+                for candle in backfill:
+                    ts = self._parse_ts(candle.get("ts"))
+                    if ts is not None:
+                        merged[ts] = candle
+                parsed = sorted(merged.items(), key=lambda item: item[0])
+            if parsed[0][0] > created:
+                return self._save(pred, horizon, "insufficient_data",
+                                  note="K 线窗口未覆盖预测时间，历史 K 线仍不可得",
+                                  data_quality="incomplete")
 
         window = [(ts, c) for ts, c in parsed if ts > created - timedelta(minutes=tf_minutes) and ts <= due]
         if not window or window[-1][0] + timedelta(minutes=tf_minutes) < due:

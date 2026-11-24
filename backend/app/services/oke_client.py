@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import os
 import threading
+from typing import Optional
 
 import requests
 
@@ -13,6 +14,20 @@ except Exception:
     CA_BUNDLE = True
 
 from app.core.config import requests_proxies
+
+# OKX K 线周期是大小写敏感的（15m / 1H / 4H / 1D），
+# 用户配置或旧数据里常见的 1h/4h/1d 需要先规范化，否则接口直接报错。
+_BAR_ALIASES = {
+    "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m",
+    "1h": "1H", "2h": "2H", "4h": "4H", "6h": "6H", "12h": "12H",
+    "1d": "1D", "1w": "1W", "1mon": "1M",
+}
+
+
+def normalize_bar(timeframe: str) -> str:
+    """把 1h/4h/1d 之类的写法映射成 OKX 接受的 bar 值。"""
+    raw = (timeframe or "").strip()
+    return _BAR_ALIASES.get(raw.lower(), raw)
 
 # 每个工作线程复用一个 Session，复用 TCP/TLS 连接，避免每次请求重新握手
 _thread_local = threading.local()
@@ -168,9 +183,12 @@ class OKEClient:
             "source": "okx",
         }
 
-    def fetch_candles(self, symbol: str, timeframe: str):
+    def fetch_candles(self, symbol: str, timeframe: str, limit: Optional[int] = None):
         inst_id = self._symbol_to_inst_id(symbol)
-        payload = self._request("/api/v5/market/candles", {"instId": inst_id, "bar": timeframe})
+        params = {"instId": inst_id, "bar": normalize_bar(timeframe)}
+        if limit:
+            params["limit"] = str(max(1, min(int(limit), 300)))
+        payload = self._request("/api/v5/market/candles", params)
         candles = []
         for row in payload.get("data", []):
             candles.append(
@@ -188,6 +206,55 @@ class OKEClient:
                 }
             )
         return list(reversed(candles))
+
+    def fetch_candles_range(self, symbol: str, timeframe: str, start_ms: int, end_ms: int,
+                            max_pages: int = 12):
+        """按时间窗回补历史 K 线（用于停机期间到期的回验），返回升序列表。
+
+        `/market/candles` 只返回最近 100 根，停机超过该窗口就取不到到期区间；
+        这里用 `/market/history-candles` 以 after 向前翻页，最多 max_pages 页。
+        """
+        inst_id = self._symbol_to_inst_id(symbol)
+        collected = {}
+        upper = int(end_ms) + 1
+        for _ in range(max_pages):
+            payload = self._request(
+                "/api/v5/market/history-candles",
+                {"instId": inst_id, "bar": timeframe, "after": str(upper), "limit": "100"},
+            )
+            data = payload.get("data") or []
+            if not data:
+                break
+            page_oldest = None
+            for row in data:
+                try:
+                    ts = int(row[0])
+                except (TypeError, ValueError):
+                    continue
+                if ts > end_ms:
+                    continue
+                collected[ts] = row
+                page_oldest = ts if page_oldest is None else min(page_oldest, ts)
+            if page_oldest is None or page_oldest <= start_ms or len(data) < 100:
+                break
+            upper = page_oldest
+
+        candles = []
+        for ts in sorted(collected):
+            row = collected[ts]
+            candles.append({
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "ts": row[0],
+                "open": float(row[1]),
+                "high": float(row[2]),
+                "low": float(row[3]),
+                "close": float(row[4]),
+                "volume": float(row[5]),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "source": "okx",
+            })
+        return candles
 
     def fetch_open_interest(self, symbol: str) -> dict:
         inst_id = self._symbol_to_inst_id(symbol)
@@ -216,16 +283,20 @@ class OKEClient:
             "source": "okx",
         }
 
-    def fetch_trades(self, symbol: str):
+    def fetch_trades(self, symbol: str, limit: Optional[int] = None):
         inst_id = self._symbol_to_inst_id(symbol)
         try:
-            payload = self._request("/api/v5/market/trades", {"instId": inst_id})
+            params = {"instId": inst_id}
+            if limit:
+                params["limit"] = str(max(1, min(int(limit), 500)))
+            payload = self._request("/api/v5/market/trades", params)
             trades = []
             for row in payload.get("data", []):
                 trades.append(
                     {
                         "symbol": symbol,
                         "instId": inst_id,
+                        "tradeId": row.get("tradeId"),
                         "price": float(row.get("px", 0) or 0),
                         "size": float(row.get("sz", 0) or 0),
                         "side": row.get("side"),
@@ -237,10 +308,10 @@ class OKEClient:
         except Exception:
             return []
 
-    def fetch_books(self, symbol: str):
+    def fetch_books(self, symbol: str, sz: int = 20):
         inst_id = self._symbol_to_inst_id(symbol)
         try:
-            payload = self._request("/api/v5/market/books", {"instId": inst_id, "sz": 20})
+            payload = self._request("/api/v5/market/books", {"instId": inst_id, "sz": sz})
             row = payload["data"][0]
             return {
                 "symbol": symbol,
