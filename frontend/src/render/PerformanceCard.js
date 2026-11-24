@@ -16,6 +16,19 @@ const fmtNum = (v) => (v === null || v === undefined ? '—' : Number(v).toFixed
 const toneOf = (v) => (v === null || v === undefined ? 'flat' : v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
 const clampPct = (v) => Math.max(0, Math.min(100, Number(v) || 0));
 
+const MTF_LABELS = {
+  LONG: '多头共振',
+  SHORT: '空头共振',
+  MIXED: '多空分歧',
+  unavailable: '无上下文',
+};
+const FLOW_LABELS = {
+  bullish: '买盘偏强',
+  bearish: '卖盘偏强',
+  neutral: '中性',
+  unavailable: '无上下文',
+};
+
 function ensureStyle() {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');
@@ -150,6 +163,53 @@ function groupPanel(title, subLabel, firstCol, rows) {
   </div>`;
 }
 
+/** 上下文分桶：按 MTF 共振 / 订单流偏向；样本不足只出计数，不给胜率 */
+function contextPanel(title, groups, labels, minSample) {
+  const rows = groups || [];
+  if (!rows.length) {
+    return `<div class="perf-panel">
+      <div class="perf-panel-head">
+        <span class="perf-panel-title">${title}</span>
+        <span class="perf-panel-sub">样本 ≥ ${minSample} 才出胜率</span>
+      </div>
+      <div class="perf-empty">暂无带上下文的回验样本</div>
+    </div>`;
+  }
+  const body = rows.map((r) => {
+    const insufficient = r.insufficient_sample || (r.verified ?? 0) < minSample;
+    return `<tr>
+      <td class="strong">${labels[r.bucket] || r.bucket || '—'}</td>
+      <td class="dim">${r.predictions ?? 0}</td>
+      <td>${r.verified ?? 0}</td>
+      <td class="perf-wlf"><span class="w">${r.wins ?? 0}</span><i> / </i><span class="l">${r.losses ?? 0}</span><i> / </i><span class="f">${r.flats ?? 0}</span></td>
+      <td>
+        ${insufficient ? '<span class="perf-chip warn">样本不足</span>' : `<span class="perf-rate">
+          <span class="strong">${fmtRate(r.win_rate)}</span>
+          <i><b style="width:${clampPct(r.win_rate)}%"></b></i>
+        </span>`}
+      </td>
+      <td class="${insufficient ? 'flat' : toneOf(r.avg_net_return)}">${insufficient ? '—' : fmtPct(r.avg_net_return)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="perf-panel">
+    <div class="perf-panel-head">
+      <span class="perf-panel-title">${title}</span>
+      <span class="perf-panel-sub">样本 ≥ ${minSample} 才出胜率</span>
+    </div>
+    <table class="perf-table">
+      <thead><tr>
+        <th>分桶</th>
+        <th>预测</th>
+        <th>已回验</th>
+        <th>胜 / 负 / 平</th>
+        <th>胜率</th>
+        <th>平均净收益</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+  </div>`;
+}
+
 function detailTable(items, total, limit) {
   if (!items || !items.length) {
     return `<div class="perf-panel">
@@ -205,15 +265,17 @@ export async function renderPerformance() {
   if (!container) return;
   ensureStyle();
   try {
-    const [sumRes, detailRes] = await Promise.all([
+    const [sumRes, detailRes, contextRes] = await Promise.all([
       fetch(`${API}/summary`, { cache: 'no-store' }),
       fetch(`${API}/detail?limit=30`, { cache: 'no-store' }),
+      fetch(`${API}/context-summary`, { cache: 'no-store' }).catch(() => null),
     ]);
     if (!sumRes.ok || !detailRes.ok) {
       throw new Error(`接口返回 ${sumRes.status} / ${detailRes.status}`);
     }
     const summary = await sumRes.json();
     const detail = await detailRes.json();
+    const context = contextRes && contextRes.ok ? await contextRes.json() : null;
     const o = summary.overall || {};
     const verified = o.verified ?? 0;
     const winRate = o.win_rate;
@@ -269,6 +331,11 @@ export async function renderPerformance() {
         <div class="perf-panels">
           ${groupPanel('按币种', '预测 / 回验分布', '币种', summary.by_symbol || [])}
           ${groupPanel('按周期', '同一预测在不同持有期的表现', '周期', summary.by_horizon || [])}
+        </div>
+
+        <div class="perf-panels">
+          ${contextPanel('多周期共振', context && context.mtf_resonance, MTF_LABELS, (context && context.min_sample) || 30)}
+          ${contextPanel('订单流偏向', context && context.orderflow_bias, FLOW_LABELS, (context && context.min_sample) || 30)}
         </div>
 
         ${detailTable(detail.items || [], detail.total ?? 0, detail.limit ?? 30)}
