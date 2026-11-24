@@ -114,6 +114,19 @@ class SignalDB:
             )''')
             # V3.0：回验字段（增量迁移，兼容旧库）
             self._migrate_predictions(conn)
+            # V3.0 预测上下文：预测时刻可见的新指标，一对一挂在 prediction_id 上
+            conn.execute('''CREATE TABLE IF NOT EXISTS prediction_context (
+                prediction_id INTEGER PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                timeframe TEXT,
+                mtf_resonance TEXT,
+                mtf_alignment INTEGER,
+                mtf_json TEXT,
+                orderflow_bias REAL,
+                orderflow_json TEXT,
+                market_json TEXT
+            )''')
             conn.execute('''CREATE TABLE IF NOT EXISTS prediction_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 prediction_id INTEGER NOT NULL,
@@ -168,6 +181,7 @@ class SignalDB:
         conn.execute('''CREATE INDEX IF NOT EXISTS idx_pred_results_horizon ON prediction_results(horizon)''')
         conn.execute('''CREATE INDEX IF NOT EXISTS idx_signal_snapshots_symbol_time ON signal_snapshots(symbol, created_at)''')
         conn.execute('''CREATE INDEX IF NOT EXISTS idx_orderflow_symbol_time ON order_flow_snapshots(symbol, created_at)''')
+        conn.execute('''CREATE INDEX IF NOT EXISTS idx_pred_ctx_symbol_time ON prediction_context(symbol, created_at)''')
 
     def save_signal(self, symbol: str, signal_data: dict) -> int:
         """保存信号到数据库，返回 ID"""
@@ -380,6 +394,92 @@ class SignalDB:
                 d['quality'] = {}
             items.append(d)
         return items
+
+    # ─── 预测上下文 ───────────────────────────────────────
+
+    def save_prediction_context(self, prediction_id: int, symbol: str, timeframe: Optional[str],
+                                mtf_resonance: Optional[str], mtf_alignment: Optional[int],
+                                mtf: Optional[dict], orderflow_bias: Optional[float],
+                                orderflow: Optional[dict], market: Optional[dict]) -> None:
+        """每条预测最多一行上下文；允许字段为空，不阻塞预测落库。"""
+        def dump(value):
+            return json.dumps(value, ensure_ascii=False, default=str) if value is not None else None
+
+        with self._connect() as conn:
+            conn.execute(
+                '''INSERT OR IGNORE INTO prediction_context
+                   (prediction_id, symbol, created_at, timeframe, mtf_resonance, mtf_alignment,
+                    mtf_json, orderflow_bias, orderflow_json, market_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (prediction_id, symbol, datetime.now(timezone.utc).isoformat(), timeframe,
+                 mtf_resonance, mtf_alignment, dump(mtf), orderflow_bias, dump(orderflow), dump(market)),
+            )
+
+    def query_prediction_context(self, prediction_id: int) -> Optional[Dict]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM prediction_context WHERE prediction_id = ?", (prediction_id,)
+            ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        for key in ("mtf_json", "orderflow_json", "market_json"):
+            try:
+                data[key] = json.loads(data[key]) if data.get(key) else None
+            except (json.JSONDecodeError, TypeError):
+                data[key] = None
+        return data
+
+    def _context_group(self, bucket_sql: str, where_sql: str, params: List,
+                       min_sample: int) -> List[Dict]:
+        base = (
+            "FROM predictions p "
+            "JOIN prediction_context c ON c.prediction_id = p.id "
+            "LEFT JOIN prediction_results r ON r.prediction_id = p.id" + where_sql
+        )
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                f"SELECT {bucket_sql} AS bucket, {self.PERF_AGG} {base} "
+                "GROUP BY bucket ORDER BY bucket",
+                params,
+            ).fetchall()
+        groups = []
+        for row in rows:
+            data = self._finalize_perf(dict(row))
+            data["insufficient_sample"] = (data.get("verified") or 0) < min_sample
+            if data["insufficient_sample"]:
+                # 样本不足只展示计数，不给胜率结论
+                data["win_rate"] = None
+                data["directional_accuracy"] = None
+                data["avg_net_return"] = None
+                data["avg_gross_return"] = None
+            groups.append(data)
+        return groups
+
+    def context_summary(self, symbol: Optional[str] = None, start: Optional[str] = None,
+                        end: Optional[str] = None, min_sample: int = 30) -> Dict:
+        """按多周期共振、订单流偏向分桶统计胜率；样本不足只返回计数。"""
+        where_sql, params = self._perf_where(symbol, start, end)
+        mtf_groups = self._context_group(
+            "COALESCE(c.mtf_resonance, 'unavailable')", where_sql, params, min_sample
+        )
+        flow_groups = self._context_group(
+            """CASE
+                 WHEN c.orderflow_bias IS NULL THEN 'unavailable'
+                 WHEN c.orderflow_bias < -30 THEN 'bearish'
+                 WHEN c.orderflow_bias > 30 THEN 'bullish'
+                 ELSE 'neutral'
+               END""",
+            where_sql, params, min_sample,
+        )
+        return {
+            "mtf_resonance": mtf_groups,
+            "orderflow_bias": flow_groups,
+            "min_sample": min_sample,
+            "definition": "胜率=WIN/已回验；样本不足时只展示计数，不给胜率结论",
+        }
 
     def get_recent_signals(self, symbol: str, limit: int = 50) -> List[Dict]:
         """获取最近的信号历史"""

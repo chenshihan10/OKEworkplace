@@ -16,6 +16,7 @@ from app.models import WatchItem
 from app.services.oke_client import OKEClient
 from app.services.signal_engine import signal_engine
 from app.services.prediction_logger import prediction_logger
+from app.services.prediction_context import prediction_context_service
 
 # 持久化文件路径
 if getattr(sys, 'frozen', False):
@@ -198,7 +199,13 @@ class MarketService:
 
         # V3.0：有方向的判断按节流规则留档（同一币种同方向默认 30 分钟一条）
         try:
-            prediction_logger.maybe_log(item.symbol, signal, ticker.get("price"))
+            prediction_id = prediction_logger.maybe_log(item.symbol, signal, ticker.get("price"))
+            # 预测落库后写旁路上下文；MTF/订单流未预热时对应字段为 null，不影响预测本身
+            if prediction_id:
+                prediction_context_service.record(
+                    prediction_id, item.symbol, item.timeframe,
+                    signal=signal, price=ticker.get("price"),
+                )
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning("Failed to save prediction: %s", e)

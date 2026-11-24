@@ -10,6 +10,7 @@ from app.services.backup_service import backup_service
 from app.services.db_store import SignalDB
 from app.services.future_validator import future_validator
 from app.services.maintenance_service import maintenance_service
+from app.services.prediction_context import prediction_context_service
 
 router = APIRouter()
 
@@ -93,3 +94,15 @@ def performance_detail(symbol: Optional[str] = None,
         start=start, end=end, limit=limit, offset=offset,
     )
     return {"total": total, "limit": limit, "offset": offset, "items": items}
+
+
+@router.get("/v3/performance/context-summary", summary="按多周期/订单流上下文分桶的绩效")
+def performance_context_summary(symbol: Optional[str] = None,
+                                start: Optional[str] = None,
+                                end: Optional[str] = None,
+                                min_sample: int = 30):
+    """只读聚合；样本不足的桶返回 insufficient_sample=true 且不给胜率结论。"""
+    min_sample = max(1, min(min_sample, 1000))
+    return prediction_context_service.summary(
+        symbol=symbol, start=start, end=end, min_sample=min_sample
+    )
