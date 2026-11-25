@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import APP_VERSION
 from app.core.scheduler import start_scheduler, stop_scheduler
 from app.routes import (
-    coins, monitor, network, analysis, orders, predictions, risk, mtf, orderflow,
+    coins, monitor, network, analysis, orders, predictions, risk, mtf, orderflow, account,
 )
 from app.shutdown import shutdown_event
 
@@ -76,6 +76,7 @@ app.include_router(orders.router, prefix="", tags=["orders"])
 app.include_router(risk.router, prefix="", tags=["risk"])
 app.include_router(mtf.router, prefix="", tags=["mtf"])
 app.include_router(orderflow.router, prefix="", tags=["orderflow"])
+app.include_router(account.router, prefix="", tags=["account"])
 app.include_router(predictions.router, prefix="/api", tags=["predictions"])
 
 
@@ -128,4 +129,5 @@ if FRONTEND_DIR.is_dir():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False, log_config=None, access_log=False)
+    # 桌面壳（entry_exe.py）本就绑定 127.0.0.1；开发直跑也不对外暴露
+    uvicorn.run(app, host="127.0.0.1", port=8000, reload=False, log_config=None, access_log=False)

@@ -14,6 +14,8 @@ import { refreshMtf, getMtfItems } from './stores/mtfStore.js';
 import { renderMtf } from './render/MtfCard.js';
 import { refreshOrderflow } from './stores/flowStore.js';
 import { renderOrderflow } from './render/OrderFlowCard.js';
+import { refreshAccount } from './stores/accountStore.js';
+import { renderAccount } from './render/AccountCard.js';
 import { refreshOrders, getRiskSettings, fetchRiskSettings, saveRiskSettings } from './stores/orderStore.js';
 import { initTabs } from './views/tabManager.js';
 
@@ -429,6 +431,12 @@ function init() {
   window.__okeRefreshOrderflow = refreshOrderflowView;
   refreshOrderflowView();
   setInterval(refreshOrderflowView, 10000);
+
+  // 实盘（只读）：后端 30 秒刷新一次，前端 15 秒读取缓存；未配置时只渲染占位
+  const refreshAccountView = () => refreshAccount().then(renderAccount).catch(() => {});
+  window.__okeRefreshAccount = refreshAccountView;
+  refreshAccountView();
+  setInterval(refreshAccountView, 15000);
   
   // 添加呼吸动画
   const style = document.createElement('style');

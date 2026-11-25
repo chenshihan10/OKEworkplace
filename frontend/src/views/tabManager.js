@@ -39,6 +39,11 @@ export function switchTab(tabName) {
   if (tabName === 'flow' && typeof window.__okeRefreshOrderflow === 'function') {
     window.__okeRefreshOrderflow();
   }
+
+  // 实盘页打开时立即拉一次账户缓存（后端 token 校验，前端带 x-oke-token）
+  if (tabName === 'account' && typeof window.__okeRefreshAccount === 'function') {
+    window.__okeRefreshAccount();
+  }
 }
 
 // 挂载到 window 供 HTML onclick 调用
