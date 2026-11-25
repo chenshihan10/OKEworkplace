@@ -22,8 +22,11 @@ from app.services.db_store import SignalDB
 FIRST_RUN_MINUTES = 5
 
 # 用于判断“数据有没有实质变化”的表（按最大 id 与页数比较，代价很小）
-_SIGNAL_TABLES = ("signals", "signal_snapshots", "analysis_snapshots", "predictions", "prediction_results")
+_SIGNAL_TABLES = ("signals", "signal_snapshots", "analysis_snapshots", "predictions",
+                  "prediction_results", "order_flow_snapshots")
 _TRADE_TABLES = ("orders", "closed_orders", "risk_events")
+_ACCOUNT_TABLES = ("account_snapshots", "position_snapshots", "account_fills",
+                   "account_config_cache", "account_sync_state")
 
 
 class BackupService:
@@ -60,9 +63,11 @@ class BackupService:
             logging.getLogger(__name__).warning("backup state write failed: %s", exc)
 
     def _data_signature(self) -> Dict:
-        """轻量数据签名：两张库的页数 + 各表最大 id，用于判断备份是否有必要。"""
+        """轻量数据签名：三张库的页数 + 各表最大 id/时间戳，用于判断备份是否有必要。"""
         signature: Dict = {}
-        for name, tables in (("signals.db", _SIGNAL_TABLES), ("user_trades.db", _TRADE_TABLES)):
+        for name, tables in (("signals.db", _SIGNAL_TABLES),
+                             ("user_trades.db", _TRADE_TABLES),
+                             ("live_account.db", _ACCOUNT_TABLES)):
             path = os.path.join(self.data_dir, name)
             if not os.path.exists(path):
                 signature[name] = None
@@ -71,20 +76,28 @@ class BackupService:
                 conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
                 try:
                     pages = conn.execute("PRAGMA page_count").fetchone()[0]
-                    marks = []
-                    for table in tables:
-                        try:
-                            marks.append(conn.execute(
-                                f"SELECT COALESCE(MAX(id), 0) FROM {table}"
-                            ).fetchone()[0])
-                        except sqlite3.Error:
-                            marks.append(-1)
+                    marks = [self._table_mark(conn, table) for table in tables]
                 finally:
                     conn.close()
                 signature[name] = [pages, *marks]
             except sqlite3.Error:
                 signature[name] = "unreadable"
         return signature
+
+    @staticmethod
+    def _table_mark(conn: sqlite3.Connection, table: str) -> int:
+        """取表的最大 id；无 id 的表用 ts；两者都没有则退回行数。"""
+        for column in ("id", "ts"):
+            try:
+                return conn.execute(
+                    f"SELECT COALESCE(MAX({column}), 0) FROM {table}"
+                ).fetchone()[0]
+            except sqlite3.Error:
+                continue
+        try:
+            return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        except sqlite3.Error:
+            return -1
 
     # ─── 触发判断 ──────────────────────────────────────
     def maybe_backup(self) -> Dict:
@@ -148,7 +161,7 @@ class BackupService:
     def _prune(self) -> int:
         removed = 0
         keep = max(1, settings.backup_keep)
-        for prefix in ("signals_", "user_trades_"):
+        for prefix in ("signals_", "user_trades_", "live_account_"):
             files = sorted(
                 (f for f in os.listdir(self.backup_dir) if f.startswith(prefix) and f.endswith(".db")),
                 reverse=True,
@@ -165,7 +178,8 @@ class BackupService:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         try:
             files = [p for p in (self._backup_one("signals.db", stamp),
-                                 self._backup_one("user_trades.db", stamp)) if p]
+                                 self._backup_one("user_trades.db", stamp),
+                                 self._backup_one("live_account.db", stamp)) if p]
             removed = self._prune()
             self.last_backup = {
                 "at": datetime.now(timezone.utc).isoformat(),
