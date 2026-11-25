@@ -17,6 +17,11 @@ build/
 .env
 backend/.env
 
+# 明文凭证（不要提交、不要分发）
+api keys/
+*api*.txt
+*凭证*.txt
+
 # OS
 Thumbs.db
 .DS_Store
