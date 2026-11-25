@@ -88,6 +88,8 @@ class Settings(BaseModel):
     signal_retention_days: int = Field(default=7)
     signal_cleanup_batch_size: int = Field(default=500)
     signal_cleanup_interval_minutes: int = Field(default=60)
+    # 订单流采样保留策略（N5 遗留项，随 signals 清理任务一并执行）
+    orderflow_retention_days: int = Field(default=7)
     # Future Validator 回验
     verify_interval_seconds: int = Field(default=60)
     verify_flat_threshold_pct: float = Field(default=0.1)
@@ -158,6 +160,7 @@ def build_settings() -> Settings:
         signal_retention_days=int(os.getenv("OKE_SIGNAL_RETENTION_DAYS", "7")),
         signal_cleanup_batch_size=int(os.getenv("OKE_SIGNAL_CLEANUP_BATCH_SIZE", "500")),
         signal_cleanup_interval_minutes=int(os.getenv("OKE_SIGNAL_CLEANUP_INTERVAL_MINUTES", "60")),
+        orderflow_retention_days=int(os.getenv("OKE_ORDERFLOW_RETENTION_DAYS", "7")),
         # Future Validator
         verify_interval_seconds=int(os.getenv("OKE_VERIFY_INTERVAL_SECONDS", "60")),
         verify_flat_threshold_pct=float(os.getenv("OKE_VERIFY_FLAT_THRESHOLD_PCT", "0.1")),

@@ -660,6 +660,31 @@ class SignalDB:
         return {"deleted": deleted, "deleted_snapshots": deleted_snapshots,
                 "batches": batches, "cutoff": cutoff, "retention_days": days}
 
+    def prune_order_flow(self, days: int = 7, batch_size: int = 500) -> Dict:
+        """分批删除超期的订单流采样（N5 遗留项）。
+
+        与写入使用同一 ISO 时间口径（含时区），保证字符串比较与时间顺序一致。
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))).isoformat()
+        deleted = 0
+        batches = 0
+        with self._connect(timeout=30) as conn:
+            while True:
+                cursor = conn.execute(
+                    "DELETE FROM order_flow_snapshots WHERE id IN "
+                    "(SELECT id FROM order_flow_snapshots WHERE created_at < ? LIMIT ?)",
+                    (cutoff, batch_size),
+                )
+                conn.commit()
+                count = cursor.rowcount
+                if count <= 0:
+                    break
+                deleted += count
+                batches += 1
+                time.sleep(0.05)
+        return {"deleted_orderflow": deleted, "batches": batches,
+                "cutoff": cutoff, "retention_days": days}
+
     # ─── V3.0 Future Validator：prediction_results ────────
 
     def get_verifiable_predictions(self, older_than_iso: str, limit: int = 200,

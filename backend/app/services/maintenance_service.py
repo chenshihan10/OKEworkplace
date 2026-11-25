@@ -1,4 +1,4 @@
-"""V3.0 数据维护：signals 保留策略（分批删除，记录最近一次执行结果）"""
+"""V3.0 数据维护：signals / 订单流采样保留策略（分批删除，记录最近一次执行结果）"""
 from __future__ import annotations
 
 import logging
@@ -15,6 +15,7 @@ class MaintenanceService:
             "at": None,
             "deleted": 0,
             "deleted_snapshots": 0,
+            "deleted_orderflow": 0,
             "batches": 0,
             "cutoff": None,
             "error": None,
@@ -26,8 +27,16 @@ class MaintenanceService:
                 days=settings.signal_retention_days,
                 batch_size=settings.signal_cleanup_batch_size,
             )
+            # N5 遗留项：订单流采样随同一维护任务清理，避免长期运行膨胀
+            orderflow = self._db.prune_order_flow(
+                days=settings.orderflow_retention_days,
+                batch_size=settings.signal_cleanup_batch_size,
+            )
             self.last_cleanup = {
                 **result,
+                "deleted_orderflow": orderflow["deleted_orderflow"],
+                "orderflow_cutoff": orderflow["cutoff"],
+                "batches": result["batches"] + orderflow["batches"],
                 "at": datetime.now(timezone.utc).isoformat(),
                 "error": None,
             }
@@ -36,6 +45,8 @@ class MaintenanceService:
             self.last_cleanup = {
                 "at": datetime.now(timezone.utc).isoformat(),
                 "deleted": 0,
+                "deleted_snapshots": 0,
+                "deleted_orderflow": 0,
                 "batches": 0,
                 "cutoff": None,
                 "error": str(exc),
@@ -45,6 +56,7 @@ class MaintenanceService:
     def stats(self) -> dict:
         return {
             "retention_days": settings.signal_retention_days,
+            "orderflow_retention_days": settings.orderflow_retention_days,
             "batch_size": settings.signal_cleanup_batch_size,
             "interval_minutes": settings.signal_cleanup_interval_minutes,
             "last_cleanup": self.last_cleanup,
