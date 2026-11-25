@@ -94,6 +94,50 @@ def start_scheduler() -> None:
             coalesce=True,
             next_run_time=datetime.now(timezone.utc) + timedelta(minutes=1),
         )
+    # 实盘只读：仅在显式开启时注册任务；未配置 Key 时服务内部直接跳过，不发请求
+    if settings.private_read_enabled:
+        from app.services.account_service import get_account_service
+        account_service = get_account_service()
+        scheduler.add_job(
+            account_service.refresh_all,
+            "interval",
+            seconds=settings.account_poll_seconds,
+            id="account_refresh",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=15),
+        )
+        scheduler.add_job(
+            account_service.sync_fills,
+            "interval",
+            seconds=settings.account_fills_poll_seconds,
+            id="account_fills",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
+        )
+        scheduler.add_job(
+            account_service.refresh_config,
+            "interval",
+            seconds=settings.account_config_poll_seconds,
+            id="account_config",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=20),
+        )
+        scheduler.add_job(
+            account_service.prune,
+            "interval",
+            hours=6,
+            id="account_prune",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc) + timedelta(minutes=5),
+        )
     # 自动备份：每 5 分钟检查一次；运行满 5 分钟首跑，之后按累计运行时长触发，数据无变化则跳过
     scheduler.add_job(
         backup_service.maybe_backup,
