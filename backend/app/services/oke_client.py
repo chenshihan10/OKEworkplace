@@ -55,10 +55,11 @@ def _read_windows_proxy_settings():
     return None
 
 
-def _build_proxy_attempts():
+def build_proxy_attempts():
     """
     主流策略：系统代理（环境变量）→ Windows 注册表代理 → 用户配置代理 → 直连
-    这是国内主流客户端（微信、飞书、各浏览器）的通用做法
+    这是国内主流客户端（微信、飞书、各浏览器）的通用做法。
+    公共客户端与私有只读客户端共用同一份代理顺序，避免两套逻辑漂移。
     """
     attempts = []
     seen = set()
@@ -103,7 +104,7 @@ class OKEClient:
 
     def _request(self, path: str, params: dict) -> dict:
         url = self.base_url.rstrip("/") + path
-        attempts = _build_proxy_attempts()
+        attempts = build_proxy_attempts()
 
         last_error = None
         for proxies in attempts:
@@ -130,7 +131,7 @@ class OKEClient:
         session = getattr(_thread_local, "session", None)
         if session is None:
             session = requests.Session()
-            session.trust_env = False  # 代理已由 _build_proxy_attempts 显式提供
+            session.trust_env = False  # 代理已由 build_proxy_attempts 显式提供
             _thread_local.session = session
         return session
 
@@ -328,7 +329,7 @@ class OKEClient:
         """获取标记价格 (mark price)"""
         inst_id = self._symbol_to_inst_id(symbol)
         url = self.base_url.rstrip("/") + "/api/v5/public/mark-price"
-        for proxies in _build_proxy_attempts():
+        for proxies in build_proxy_attempts():
             try:
                 resp = self._session.get(
                     url,
@@ -353,7 +354,7 @@ class OKEClient:
         # 指数接口使用现货指数 instId（如 BTC-USDT），不带 -SWAP
         inst_id = symbol.replace("-SWAP", "")
         url = self.base_url.rstrip("/") + "/api/v5/market/index-tickers"
-        for proxies in _build_proxy_attempts():
+        for proxies in build_proxy_attempts():
             try:
                 resp = self._session.get(
                     url,

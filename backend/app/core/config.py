@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from dotenv import load_dotenv
 
 
@@ -108,6 +108,19 @@ class Settings(BaseModel):
     orderflow_large_trade_notional: float = Field(default=50000.0)
     orderflow_books_sz: int = Field(default=400)
     orderflow_snapshot_minutes: int = Field(default=5)
+    # V2.6 实盘只读（OKX 私有 REST，仅读）
+    private_read_enabled: bool = Field(default=False)
+    private_read_base_url: str = Field(default="")
+    private_read_api_key: str = Field(default="")
+    private_read_secret_key: SecretStr = Field(default_factory=lambda: SecretStr(""))
+    private_read_passphrase: SecretStr = Field(default_factory=lambda: SecretStr(""))
+    account_poll_seconds: int = Field(default=30)
+    account_fills_poll_seconds: int = Field(default=120)
+    account_config_poll_seconds: int = Field(default=600)
+    account_snapshot_minutes: int = Field(default=5)
+    account_retention_days: int = Field(default=30)
+    account_fills_retention_days: int = Field(default=365)
+    account_fills_initial_days: int = Field(default=7)
 
 
 def build_settings() -> Settings:
@@ -165,6 +178,19 @@ def build_settings() -> Settings:
         orderflow_large_trade_notional=float(os.getenv("OKE_ORDERFLOW_LARGE_TRADE_NOTIONAL", "50000")),
         orderflow_books_sz=int(os.getenv("OKE_ORDERFLOW_BOOKS_SZ", "400")),
         orderflow_snapshot_minutes=int(os.getenv("OKE_ORDERFLOW_SNAPSHOT_MINUTES", "5")),
+        # 实盘只读（未配置 Key 时任务不注册、不发起请求）
+        private_read_enabled=os.getenv("OKE_PRIVATE_READ_ENABLED", "false").lower() == "true",
+        private_read_base_url=os.getenv("OKE_PRIVATE_READ_BASE_URL", ""),
+        private_read_api_key=os.getenv("OKE_PRIVATE_READ_API_KEY", ""),
+        private_read_secret_key=os.getenv("OKE_PRIVATE_READ_SECRET_KEY", ""),
+        private_read_passphrase=os.getenv("OKE_PRIVATE_READ_PASSPHRASE", ""),
+        account_poll_seconds=int(os.getenv("OKE_ACCOUNT_POLL_SECONDS", "30")),
+        account_fills_poll_seconds=int(os.getenv("OKE_ACCOUNT_FILLS_POLL_SECONDS", "120")),
+        account_config_poll_seconds=int(os.getenv("OKE_ACCOUNT_CONFIG_POLL_SECONDS", "600")),
+        account_snapshot_minutes=int(os.getenv("OKE_ACCOUNT_SNAPSHOT_MINUTES", "5")),
+        account_retention_days=int(os.getenv("OKE_ACCOUNT_RETENTION_DAYS", "30")),
+        account_fills_retention_days=int(os.getenv("OKE_ACCOUNT_FILLS_RETENTION_DAYS", "365")),
+        account_fills_initial_days=int(os.getenv("OKE_ACCOUNT_FILLS_INITIAL_DAYS", "7")),
     )
 
 
