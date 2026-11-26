@@ -61,3 +61,15 @@ def account_fills(
 @router.get("/config")
 def account_config() -> dict:
     return get_account_service().config_view()
+
+
+@router.get("/risk")
+def account_risk() -> dict:
+    """账户级真实风险（敞口/集中度/强平距离），只展示不处置。"""
+    return get_account_service().risk_view()
+
+
+@router.get("/reconciliation")
+def account_reconciliation() -> dict:
+    """本地手工订单与实盘持仓对账，只读并列展示。"""
+    return get_account_service().reconciliation_view()

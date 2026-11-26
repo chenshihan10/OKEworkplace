@@ -432,11 +432,24 @@ function init() {
   refreshOrderflowView();
   setInterval(refreshOrderflowView, 10000);
 
-  // 实盘（只读）：后端 30 秒刷新一次，前端 15 秒读取缓存；未配置时只渲染占位
-  const refreshAccountView = () => refreshAccount().then(renderAccount).catch(() => {});
-  window.__okeRefreshAccount = refreshAccountView;
-  refreshAccountView();
-  setInterval(refreshAccountView, 15000);
+  // 实盘（只读）：默认隐藏 Tab，也不轮询。
+  // 恢复方式：backend/.env 设 OKE_PRIVATE_READ_ENABLED=true 并填好只读 Key，重启即可；
+  // 本函数只在启动时判定一次，未启用时不产生任何账户请求。
+  window.__okeRefreshAccount = () => refreshAccount().then(renderAccount).catch(() => {});
+  const initAccountTab = async () => {
+    const state = await refreshAccount().catch(() => null);
+    const status = state && state.status;
+    const enabled = Boolean(status && status.enabled && status.configured);
+    const btn = document.getElementById('tab-btn-account');
+    if (!enabled) {
+      if (btn) btn.style.display = 'none';
+      return;
+    }
+    if (btn) btn.style.display = '';
+    renderAccount();
+    setInterval(() => refreshAccount().then(renderAccount).catch(() => {}), 15000);
+  };
+  initAccountTab();
   
   // 添加呼吸动画
   const style = document.createElement('style');

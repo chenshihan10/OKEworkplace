@@ -123,6 +123,8 @@ class Settings(BaseModel):
     account_retention_days: int = Field(default=30)
     account_fills_retention_days: int = Field(default=365)
     account_fills_initial_days: int = Field(default=7)
+    # P2 对账：本地名义价值与实盘名义价值的容差（百分比），仅用于提示“数量不一致”
+    account_reconcile_tolerance_pct: float = Field(default=20.0)
 
 
 def build_settings() -> Settings:
@@ -194,6 +196,9 @@ def build_settings() -> Settings:
         account_retention_days=int(os.getenv("OKE_ACCOUNT_RETENTION_DAYS", "30")),
         account_fills_retention_days=int(os.getenv("OKE_ACCOUNT_FILLS_RETENTION_DAYS", "365")),
         account_fills_initial_days=int(os.getenv("OKE_ACCOUNT_FILLS_INITIAL_DAYS", "7")),
+        account_reconcile_tolerance_pct=float(
+            os.getenv("OKE_ACCOUNT_RECONCILE_TOLERANCE_PCT", "20")
+        ),
     )
 
 

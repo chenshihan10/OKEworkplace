@@ -42,8 +42,10 @@ class AccountService:
     RESOURCES = ("summary", "positions", "config", "fills")
 
     def __init__(self, store: Optional[AccountStore] = None,
-                 client: Optional[OKXPrivateClient] = None) -> None:
+                 client: Optional[OKXPrivateClient] = None,
+                 orders_provider=None) -> None:
         self._store = store
+        self._orders_provider = orders_provider
         self._client = client or OKXPrivateClient(
             settings.private_read_base_url or settings.oke_base_url,
             settings.private_read_api_key,
@@ -215,6 +217,8 @@ class AccountService:
                     "liq_px": _to_float(item.get("liqPx")),
                     "mgn_ratio": _to_float(item.get("mgnRatio")),
                     "mgn_mode": item.get("mgnMode"),
+                    # P2：交易所已给出 USD 名义价值，无需 ctVal 换算
+                    "notional_usd": _to_float(item.get("notionalUsd")),
                     "raw": item,
                 })
             self._cache["positions"] = rows
@@ -468,8 +472,243 @@ class AccountService:
             "cursor": self._cursor,
         }
 
+    # ─── P2：账户级真实风险与本地/实盘对账 ─────────────
+    def _risk_settings(self) -> Dict:
+        try:
+            return self._orders().get_risk_settings() or {}
+        except Exception:  # 本地订单库读取失败不影响账户展示
+            return {}
+
+    @staticmethod
+    def _side_of(row: Dict) -> str:
+        side = (row.get("pos_side") or "").lower()
+        if side in ("long", "short"):
+            return side
+        return "long" if (row.get("pos_raw") or 0) > 0 else "short"
+
+    def risk_view(self) -> Dict:
+        """真实风险：保证金、强平距离、按币种名义敞口与集中度（只展示，不处置）。"""
+        gate = self._gate_reason()
+        summary = self._cache["summary"]
+        positions = self._cache["positions"]
+        sources = ["/api/v5/account/balance", "/api/v5/account/positions"]
+        if summary is None and positions is None:
+            return {
+                "available": False, "stale": False, "reason": gate,
+                "data": None, "sources": sources, "display_only": True,
+            }
+
+        rows: List[Dict] = []
+        long_notional = short_notional = 0.0
+        for pos in positions or []:
+            side = self._side_of(pos)
+            notional = abs(pos.get("notional_usd") or 0.0)
+            if side == "long":
+                long_notional += notional
+            else:
+                short_notional += notional
+            mark, liq = pos.get("mark_px"), pos.get("liq_px")
+            liq_distance = None
+            if mark and liq:
+                liq_distance = ((mark - liq) if side == "long" else (liq - mark)) / mark
+            rows.append({
+                "inst_id": pos.get("inst_id"),
+                "side": side,
+                "pos_raw": pos.get("pos_raw"),
+                "notional_usd": notional,
+                "mark_px": mark,
+                "liq_px": liq,
+                "liq_distance_pct": liq_distance,
+                "mgn_ratio": pos.get("mgn_ratio"),
+                "upl": pos.get("upl"),
+                "lever": pos.get("lever"),
+            })
+
+        total_notional = long_notional + short_notional
+        top = max(rows, key=lambda item: item["notional_usd"], default=None)
+        threshold_pct = self._risk_settings().get("max_symbol_concentration_pct") or 50.0
+        concentration_pct = (top["notional_usd"] / total_notional) if top and total_notional else None
+        warnings: List[Dict] = []
+        if concentration_pct is not None and concentration_pct * 100 > float(threshold_pct):
+            warnings.append({
+                "type": "concentration",
+                "message": f"{top['inst_id']} 占比 {concentration_pct * 100:.1f}%，"
+                           f"超过阈值 {threshold_pct:.0f}%",
+            })
+        risky = [row for row in rows if row["liq_distance_pct"] is not None]
+        nearest = min(risky, key=lambda r: r["liq_distance_pct"], default=None)
+        if nearest is not None and 0 <= nearest["liq_distance_pct"] < 0.1:
+            warnings.append({
+                "type": "liquidation",
+                "message": f"{nearest['inst_id']} 距强平仅 {nearest['liq_distance_pct'] * 100:.1f}%",
+            })
+
+        return {
+            "available": True,
+            "stale": bool(
+                self._resources["summary"]["stale"] or self._resources["positions"]["stale"]
+            ),
+            "reason": gate or self._resources["positions"]["error"],
+            "updated_at": self._resources["positions"]["updated_at"],
+            "data": {
+                "account": None if summary is None else {
+                    "total_eq": summary.get("total_eq"),
+                    "avail_eq": summary.get("avail_eq"),
+                    "upl": summary.get("upl"),
+                    "imr": summary.get("imr"),
+                    "mmr": summary.get("mmr"),
+                    "mgn_ratio": summary.get("mgn_ratio"),
+                },
+                "exposure": {
+                    "long_notional": long_notional,
+                    "short_notional": short_notional,
+                    "net_notional": long_notional - short_notional,
+                    "total_notional": total_notional,
+                },
+                "concentration": {
+                    "inst_id": top["inst_id"] if top else None,
+                    "pct": concentration_pct,
+                    "threshold_pct": float(threshold_pct) / 100,
+                    "exceeded": bool(
+                        concentration_pct is not None
+                        and concentration_pct * 100 > float(threshold_pct)
+                    ),
+                },
+                "nearest_liquidation": None if nearest is None else {
+                    "inst_id": nearest["inst_id"],
+                    "distance_pct": nearest["liq_distance_pct"],
+                },
+                "positions": rows,
+                "warnings": warnings,
+                "units": {"notional": "USD", "liq_distance": "ratio"},
+            },
+            "sources": sources,
+            "display_only": True,
+        }
+
+    def reconciliation_view(self) -> Dict:
+        """本地手工订单与实盘持仓对账：只并列展示，绝不写回 orders 表。"""
+        gate = self._gate_reason()
+        sources = ["/api/v5/account/positions", "orders(本地手工记账)"]
+        positions = self._cache["positions"]
+        if positions is None:
+            return {
+                "available": False, "stale": False, "reason": gate or "持仓尚未刷新",
+                "data": None, "sources": sources, "display_only": True,
+            }
+
+        local_rows = self._orders().get_open_orders()
+        local: Dict[str, Dict] = {}
+        for order in local_rows:
+            symbol = (order.get("symbol") or "").upper().replace("-SWAP", "")
+            if not symbol:
+                continue
+            bucket = local.setdefault(symbol, {
+                "symbol": symbol, "qty_long": 0.0, "qty_short": 0.0,
+                "notional_long": 0.0, "notional_short": 0.0, "orders": 0,
+            })
+            qty = float(order.get("quantity") or 0)
+            price = float(order.get("entry_price") or 0)
+            bucket["orders"] += 1
+            if (order.get("direction") or "").upper() == "SHORT":
+                bucket["qty_short"] += qty
+                bucket["notional_short"] += qty * price
+            else:
+                bucket["qty_long"] += qty
+                bucket["notional_long"] += qty * price
+
+        live: Dict[str, Dict] = {}
+        for pos in positions:
+            symbol = (pos.get("inst_id") or "").upper().replace("-SWAP", "")
+            if not symbol:
+                continue
+            bucket = live.setdefault(symbol, {
+                "symbol": symbol, "contracts_long": 0.0, "contracts_short": 0.0,
+                "notional": 0.0, "inst_id": pos.get("inst_id"),
+            })
+            side = self._side_of(pos)
+            qty = abs(pos.get("pos_raw") or 0.0)
+            if side == "long":
+                bucket["contracts_long"] += qty
+            else:
+                bucket["contracts_short"] += qty
+            bucket["notional"] += abs(pos.get("notional_usd") or 0.0)
+
+        tolerance = float(settings.account_reconcile_tolerance_pct) / 100
+        rows: List[Dict] = []
+        counts = {"matched": 0, "local_only": 0, "live_only": 0,
+                  "side_mismatch": 0, "qty_mismatch": 0}
+        for symbol in sorted(set(local) | set(live)):
+            local_item = local.get(symbol)
+            live_item = live.get(symbol)
+            local_notional = None
+            if local_item:
+                local_notional = local_item["notional_long"] + local_item["notional_short"]
+            live_notional = live_item["notional"] if live_item else None
+
+            if live_item and local_item:
+                local_dir = "long" if local_item["notional_long"] >= local_item["notional_short"] else "short"
+                live_dir = "long" if live_item["contracts_long"] >= live_item["contracts_short"] else "short"
+                if local_dir != live_dir:
+                    status = "side_mismatch"
+                elif live_notional is not None and local_notional is not None:
+                    diff_ratio = abs(local_notional - live_notional) / max(live_notional, 1e-9)
+                    status = "qty_mismatch" if diff_ratio > tolerance else "matched"
+                else:
+                    status = "matched"
+            elif local_item:
+                status = "local_only"
+            else:
+                status = "live_only"
+            counts[status] += 1
+
+            rows.append({
+                "symbol": symbol,
+                "inst_id": (live_item or {}).get("inst_id") or f"{symbol}-SWAP",
+                "local": None if local_item is None else {
+                    "orders": local_item["orders"],
+                    "qty_long": local_item["qty_long"],
+                    "qty_short": local_item["qty_short"],
+                    "notional_usd": local_notional,
+                },
+                "live": None if live_item is None else {
+                    "contracts_long": live_item["contracts_long"],
+                    "contracts_short": live_item["contracts_short"],
+                    "notional_usd": live_item["notional"],
+                },
+                "status": status,
+            })
+
+        return {
+            "available": True,
+            "stale": bool(self._resources["positions"]["stale"]),
+            "reason": gate or self._resources["positions"]["error"],
+            "updated_at": self._resources["positions"]["updated_at"],
+            "data": {
+                "tolerance_pct": tolerance,
+                "counts": counts,
+                "rows": rows,
+                "notes": [
+                    "本地数量为下单时的手工记账单位，实盘为合约张数，两者单位不同。",
+                    "状态按方向与 USD 名义价值对比得出，不写回本地 orders 表。",
+                ],
+            },
+            "sources": sources,
+            "display_only": True,
+        }
+
+    def _orders(self):
+        if self._orders_provider is not None:
+            return self._orders_provider()
+        global _order_manager
+        if _order_manager is None:
+            from app.services.order_manager import OrderManager
+            _order_manager = OrderManager()
+        return _order_manager
+
 
 _instance: Optional[AccountService] = None
+_order_manager = None
 
 
 def get_account_service() -> AccountService:

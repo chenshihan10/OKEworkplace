@@ -82,6 +82,9 @@ app.include_router(predictions.router, prefix="/api", tags=["predictions"])
 
 @app.on_event("startup")
 def on_startup() -> None:
+    # 测试/离线环境不注册调度器：避免测试启动应用时发起真实行情与私有只读请求
+    if os.getenv("OKE_DISABLE_SCHEDULER", "0") == "1":
+        return
     start_scheduler()
 
 

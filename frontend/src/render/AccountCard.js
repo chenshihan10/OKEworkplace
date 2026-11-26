@@ -264,6 +264,107 @@ function fillsBlock(fills) {
     <div style="margin-top:6px;font-size:0.7rem;color:${DIM};">数量为交易所原始单位「张」，P1 不做张数与币数量换算。</div>`;
 }
 
+function riskBlock(risk) {
+  if (!risk) return '';
+  const head = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <strong style="font-size:0.9rem;">账户风险（真实）</strong>
+      ${badge('只展示，不处置', '#8b5cf6')}
+      ${risk.stale ? badge('数据过期', AMBER) : ''}
+    </div>`;
+  if (!risk.available || !risk.data) {
+    return `${head}<div style="font-size:0.8rem;color:${AMBER};">不可用：${esc(risk.reason || '缺少账户摘要或持仓')}</div>`;
+  }
+  const data = risk.data;
+  const exposure = data.exposure || {};
+  const concentration = data.concentration || {};
+  const nearest = data.nearest_liquidation;
+  const account = data.account || {};
+  const warnings = data.warnings || [];
+  return `
+    ${head}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;">
+      ${metric('总权益', fmtNumber(account.total_eq, 2))}
+      ${metric('可用保证金', fmtNumber(account.avail_eq, 2))}
+      ${metric('维持保证金', fmtNumber(account.mmr, 2))}
+      ${metric('保证金率', fmtNumber(account.mgn_ratio, 2))}
+      ${metric('总名义敞口', fmtNumber(exposure.total_notional, 2))}
+      ${metric('多空净敞口', fmtNumber(exposure.net_notional, 2), Number(exposure.net_notional) >= 0 ? GREEN : RED)}
+      ${metric('最高集中度', concentration.pct === null || concentration.pct === undefined ? '-' : pct(concentration.pct, 1),
+        concentration.exceeded ? RED : '#e2e8f0')}
+      ${metric('最近强平距离', nearest ? pct(nearest.distance_pct, 1) : '-', AMBER)}
+    </div>
+    ${warnings.length ? `<div style="margin-top:8px;display:grid;gap:4px;">
+      ${warnings.map((item) => `<div style="font-size:0.76rem;color:${AMBER};">提示：${esc(item.message)}</div>`).join('')}
+    </div>` : ''}
+    <div style="margin-top:6px;font-size:0.7rem;color:${DIM};">
+      敞口按交易所返回的 USD 名义价值汇总；集中度阈值取「风险设置」中的单币种上限（${pct(concentration.threshold_pct, 0)}）。
+    </div>`;
+}
+
+const RECON_LABEL = {
+  matched: ['一致', GREEN],
+  local_only: ['本地有、实盘无', AMBER],
+  live_only: ['实盘有、本地无', '#3b82f6'],
+  side_mismatch: ['方向相反', RED],
+  qty_mismatch: ['数量不一致', AMBER],
+};
+
+function reconciliationBlock(recon) {
+  if (!recon) return '';
+  const head = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <strong style="font-size:0.9rem;">本地记账 ↔ 实盘对账</strong>
+      ${badge('只读并列，不写回订单', '#8b5cf6')}
+      ${recon.stale ? badge('数据过期', AMBER) : ''}
+    </div>`;
+  if (!recon.available || !recon.data) {
+    return `${head}<div style="font-size:0.8rem;color:${AMBER};">不可用：${esc(recon.reason || '持仓尚未刷新')}</div>`;
+  }
+  const rows = recon.data.rows || [];
+  const counts = recon.data.counts || {};
+  if (!rows.length) {
+    return `${head}<div style="font-size:0.8rem;color:${MUTED};">本地无持仓订单，交易所也无持仓</div>`;
+  }
+  return `
+    ${head}
+    <div style="font-size:0.74rem;color:${MUTED};margin-bottom:6px;">
+      一致 ${counts.matched || 0} · 本地有实盘无 ${counts.local_only || 0} · 实盘有本地无 ${counts.live_only || 0} · 方向相反 ${counts.side_mismatch || 0} · 数量不一致 ${counts.qty_mismatch || 0}
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:0.76rem;">
+      <thead><tr style="color:${MUTED};text-align:left;">
+        <th style="padding:4px 6px;border-bottom:1px solid #334155;">币种</th>
+        <th style="padding:4px 6px;border-bottom:1px solid #334155;text-align:right;">本地（多/空）</th>
+        <th style="padding:4px 6px;border-bottom:1px solid #334155;text-align:right;">本地名义</th>
+        <th style="padding:4px 6px;border-bottom:1px solid #334155;text-align:right;">实盘（多/空 张）</th>
+        <th style="padding:4px 6px;border-bottom:1px solid #334155;text-align:right;">实盘名义</th>
+        <th style="padding:4px 6px;border-bottom:1px solid #334155;">状态</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map((row) => {
+          const [label, color] = RECON_LABEL[row.status] || [row.status, MUTED];
+          const local = row.local;
+          const live = row.live;
+          return `<tr>
+            <td style="padding:4px 6px;">${esc(row.symbol)}</td>
+            <td style="padding:4px 6px;text-align:right;color:${DIM};">
+              ${local ? `${fmtNumber(local.qty_long, 4)} / ${fmtNumber(local.qty_short, 4)}` : '-'}
+            </td>
+            <td style="padding:4px 6px;text-align:right;color:${DIM};">${local ? fmtNumber(local.notional_usd, 2) : '-'}</td>
+            <td style="padding:4px 6px;text-align:right;">
+              ${live ? `${fmtNumber(live.contracts_long, 2)} / ${fmtNumber(live.contracts_short, 2)}` : '-'}
+            </td>
+            <td style="padding:4px 6px;text-align:right;">${live ? fmtNumber(live.notional_usd, 2) : '-'}</td>
+            <td style="padding:4px 6px;">${badge(label, color)}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    <div style="margin-top:6px;font-size:0.7rem;color:${DIM};">
+      ${(recon.data.notes || []).map(esc).join(' ')}
+    </div>`;
+}
+
 export function renderAccount() {
   const target = document.querySelector('[data-account]');
   if (!target) return;
@@ -286,6 +387,8 @@ export function renderAccount() {
           <div class="flow-card">${marginBlock(state.margin)}</div>
           <div class="flow-card">${configBlock(state.config)}</div>
         </div>
+        <div class="flow-card">${riskBlock(state.risk)}</div>
+        <div class="flow-card">${reconciliationBlock(state.reconciliation)}</div>
         <div class="flow-card">${fillsBlock(state.fills)}</div>
       </div>`;
 

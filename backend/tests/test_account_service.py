@@ -227,6 +227,99 @@ def test_margin_view_is_derived_and_display_only():
             _enable(previous)
 
 
+POSITIONS_P2 = {"code": "0", "data": [
+    {"instId": "BTC-USDT-SWAP", "posSide": "long", "pos": "2",
+     "avgPx": "60000", "markPx": "60100", "upl": "20", "lever": "3",
+     "liqPx": "40000", "mgnRatio": "12.5", "mgnMode": "cross", "notionalUsd": "12000"},
+    {"instId": "SOL-USDT-SWAP", "posSide": "short", "pos": "10",
+     "avgPx": "100", "markPx": "99", "upl": "5", "lever": "5",
+     "liqPx": "150", "mgnRatio": "8", "mgnMode": "cross", "notionalUsd": "2000"},
+]}
+
+
+class FakeOrders:
+    def __init__(self, orders=None, concentration=50.0):
+        self.orders = orders or []
+        self.concentration = concentration
+
+    def get_open_orders(self):
+        return list(self.orders)
+
+    def get_risk_settings(self):
+        return {"max_symbol_concentration_pct": self.concentration}
+
+
+def _service_p2(client, orders, tmp):
+    store = AccountStore(tmp)
+    return AccountService(store=store, client=client, orders_provider=lambda: orders), store
+
+
+def test_risk_view_exposure_and_concentration():
+    previous = _enable(True)
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            client = FakeClient({
+                "/api/v5/account/balance": SUMMARY,
+                "/api/v5/account/positions": POSITIONS_P2,
+            })
+            service, _ = _service_p2(client, FakeOrders(concentration=50.0), tmp)
+            service.refresh_all()
+            risk = service.risk_view()
+            assert risk["available"] is True
+            assert risk["display_only"] is True
+            data = risk["data"]
+            assert data["exposure"]["long_notional"] == 12000.0
+            assert data["exposure"]["short_notional"] == 2000.0
+            assert data["exposure"]["net_notional"] == 10000.0
+            assert data["exposure"]["total_notional"] == 14000.0
+            assert data["concentration"]["inst_id"] == "BTC-USDT-SWAP"
+            assert abs(data["concentration"]["pct"] - 12000 / 14000) < 1e-9
+            assert data["concentration"]["exceeded"] is True
+            assert any(w["type"] == "concentration" for w in data["warnings"])
+            btc = [r for r in data["positions"] if r["inst_id"] == "BTC-USDT-SWAP"][0]
+            assert abs(btc["liq_distance_pct"] - (60100 - 40000) / 60100) < 1e-9
+            # 强平距离最小的是 BTC（33%），不触发 10% 告警
+            assert all(w["type"] != "liquidation" for w in data["warnings"])
+        finally:
+            _enable(previous)
+
+
+def test_reconciliation_flags_local_only_live_only_and_mismatch():
+    previous = _enable(True)
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            client = FakeClient({
+                "/api/v5/account/balance": SUMMARY,
+                "/api/v5/account/positions": POSITIONS_P2,
+            })
+            orders = FakeOrders([
+                {"symbol": "BTC-USDT", "direction": "LONG", "quantity": 0.2,
+                 "entry_price": 60000},                       # 与实盘 12000 USD 一致
+                {"symbol": "ETH-USDT", "direction": "LONG", "quantity": 1,
+                 "entry_price": 2000},                        # 本地有、实盘无
+                {"symbol": "SOL-USDT", "direction": "SHORT", "quantity": 5,
+                 "entry_price": 99},                          # 实盘 2000 USD，本地 495 USD → 数量不一致
+            ])
+            service, _ = _service_p2(client, orders, tmp)
+            service.refresh_all()
+            view = service.reconciliation_view()
+            assert view["available"] is True
+            assert view["display_only"] is True
+            rows = {row["symbol"]: row for row in view["data"]["rows"]}
+            assert rows["BTC-USDT"]["status"] == "matched"
+            assert rows["ETH-USDT"]["status"] == "local_only"
+            assert rows["ETH-USDT"]["live"] is None
+            assert rows["SOL-USDT"]["status"] == "qty_mismatch"
+            counts = view["data"]["counts"]
+            assert counts["matched"] == 1
+            assert counts["local_only"] == 1
+            assert counts["qty_mismatch"] == 1
+            # 只读：绝不写回本地 orders 表
+            assert len(orders.orders) == 3
+        finally:
+            _enable(previous)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, func in sorted(globals().items()):

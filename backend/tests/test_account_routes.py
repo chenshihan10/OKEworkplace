@@ -47,6 +47,14 @@ class FakeService:
         self.calls.append(("config",))
         return {"available": False, "data": None}
 
+    def risk_view(self):
+        self.calls.append(("risk",))
+        return {"available": False, "data": None, "display_only": True}
+
+    def reconciliation_view(self):
+        self.calls.append(("reconciliation",))
+        return {"available": False, "data": None, "display_only": True}
+
 
 def _request(headers=None, params=None):
     return SimpleNamespace(headers=headers or {}, query_params=params or {})
@@ -85,6 +93,8 @@ def test_router_prefix_and_paths():
         "/api/v3/account/margin",
         "/api/v3/account/fills",
         "/api/v3/account/config",
+        "/api/v3/account/risk",
+        "/api/v3/account/reconciliation",
     }
     # 路由级依赖必须挂在每个接口上
     assert all(route.dependencies for route in account_routes.router.routes)
@@ -128,6 +138,8 @@ def test_endpoints_return_placeholders_without_key():
         assert account_routes.account_positions()["data"] is None
         assert account_routes.account_margin()["display_only"] is True
         assert account_routes.account_config()["available"] is False
+        assert account_routes.account_risk()["display_only"] is True
+        assert account_routes.account_reconciliation()["data"] is None
         fills = account_routes.account_fills(limit=20, offset=40, inst_id="BTC-USDT-SWAP")
         assert fills["items"] == []
         assert ("fills", 20, 40, "BTC-USDT-SWAP") in fake.calls

@@ -10,6 +10,8 @@ let state = {
   margin: null,
   fills: null,
   config: null,
+  risk: null,
+  reconciliation: null,
   error: null,
   loading: false,
   updatedAt: null,
@@ -38,24 +40,30 @@ export async function refreshAccount() {
   try {
     state.status = await get('/status');
     if (state.status.enabled && state.status.configured) {
-      const [summary, positions, margin, fills, config] = await Promise.all([
+      const [summary, positions, margin, fills, config, risk, reconciliation] = await Promise.all([
         get('/summary'),
         get('/positions'),
         get('/margin'),
         get('/fills?limit=20'),
         get('/config'),
+        get('/risk'),
+        get('/reconciliation'),
       ]);
       state.summary = summary;
       state.positions = positions;
       state.margin = margin;
       state.fills = fills;
       state.config = config;
+      state.risk = risk;
+      state.reconciliation = reconciliation;
     } else {
       state.summary = null;
       state.positions = null;
       state.margin = null;
       state.fills = null;
       state.config = null;
+      state.risk = null;
+      state.reconciliation = null;
     }
     state.error = null;
     state.updatedAt = new Date().toISOString();
