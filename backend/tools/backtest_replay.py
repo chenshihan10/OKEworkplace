@@ -128,7 +128,42 @@ def oi_change_at(series, ts, lookback_ms):
     return round((cur - prev) / prev * 100, 4)
 
 
-def run(symbols, timeframes, threshold, cost, out_path, use_oi=False, days=None):
+def fetch_funding_series(client, inst_id, start_ms, end_ms):
+    """资金费率历史（约 94 天，8 小时一条），按 after 向前翻页。
+
+    防御：若接口忽略 after（返回与上次相同的页），立即停止，避免死循环。
+    """
+    series = {}
+    cursor = end_ms
+    for _ in range(10):
+        if cursor <= start_ms:
+            break
+        payload = client._request(
+            "/api/v5/public/funding-rate-history",
+            {"instId": inst_id, "after": str(cursor), "limit": "100"},
+        )
+        rows = payload.get("data", [])
+        if not rows:
+            break
+        for r in rows:
+            series[int(r["fundingTime"])] = float(r["fundingRate"])
+        oldest = min(int(r["fundingTime"]) for r in rows)
+        if oldest >= cursor:  # 没有前进，接口忽略 after
+            break
+        cursor = oldest
+        time.sleep(0.15)
+    return sorted(series.items())
+
+
+def funding_at(series, ts):
+    if not series:
+        return 0.0
+    keys = [k for k, _ in series]
+    i = bisect.bisect_right(keys, ts) - 1
+    return series[i][1] if i >= 0 else 0.0
+
+
+def run(symbols, timeframes, threshold, cost, out_path, use_oi=False, use_funding=False, days=None):
     settings = build_settings()
     base_url = settings.oke_base_url
     if "example.com" in base_url:
@@ -136,7 +171,8 @@ def run(symbols, timeframes, threshold, cost, out_path, use_oi=False, days=None)
     client = OKEClient(base_url, "")
     now_ms = int(time.time() * 1000)
     report = {"generated_at": datetime.now(timezone.utc).isoformat(),
-              "cost_round_trip": cost, "threshold": threshold, "oi_mode": use_oi,
+              "cost_round_trip": cost, "threshold": threshold,
+              "oi_mode": use_oi, "funding_mode": use_funding,
               "results": {}}
     for tf in timeframes:
         tf_min = TF_MINUTES[tf]
@@ -160,8 +196,11 @@ def run(symbols, timeframes, threshold, cost, out_path, use_oi=False, days=None)
                     start_ms - 2 * 86400000, now_ms,
                 )
             lookback_ms = 900000 if tf == "15m" else 3600000
+            funding_series = []
+            if use_funding:
+                funding_series = fetch_funding_series(client, inst, start_ms, now_ms)
             filled = {"bars": n, "first": candles[0]["ts"] if n else None,
-                      "oi_points": len(oi_series)}
+                      "oi_points": len(oi_series), "funding_points": len(funding_series)}
             sym_trades = {h: [] for h in horizons}
             if n < CANDLE_WINDOW + max(horizons) // tf_min + 1:
                 per_symbol[symbol] = {"error": "数据不足", **filled}
@@ -169,9 +208,10 @@ def run(symbols, timeframes, threshold, cost, out_path, use_oi=False, days=None)
             for i in range(CANDLE_WINDOW - 1, n - 1):
                 window = candles[i - CANDLE_WINDOW + 1: i + 1]
                 oi_pct = oi_change_at(oi_series, candles[i]["ts"], lookback_ms) if use_oi else 0
+                funding_rate = funding_at(funding_series, candles[i]["ts"]) if use_funding else 0
                 sig = signal_engine.evaluate(
                     symbol, window, closes[i], tf,
-                    {"change_pct": oi_pct}, {"rate": 0},
+                    {"change_pct": oi_pct}, {"rate": funding_rate},
                 )
                 analysis = sig["analysis"]
                 score = int(analysis.score)
@@ -232,10 +272,11 @@ if __name__ == "__main__":
     parser.add_argument("--timeframes", default="15m,1H,4H")
     parser.add_argument("--threshold", type=int, default=70)
     parser.add_argument("--oi", action="store_true", help="使用真实 OI 历史（约 30 天可用）")
+    parser.add_argument("--funding", action="store_true", help="使用真实资金费率历史（约 94 天可用）")
     parser.add_argument("--days", type=int, default=None, help="统一覆盖各周期的回看天数")
     parser.add_argument("--out", default=r"d:\OKEworkplace\backend\data\backtest_results.json")
     args = parser.parse_args()
     settings = build_settings()
     cost = 2 * (settings.verify_fee_rate + settings.verify_slippage_rate)
     run(args.symbols.split(","), args.timeframes.split(","), args.threshold, cost,
-        args.out, use_oi=args.oi, days=args.days)
+        args.out, use_oi=args.oi, use_funding=args.funding, days=args.days)
