@@ -188,15 +188,6 @@ class MarketService:
             open_interest, funding_rate, trades, books,
         )
 
-        # 影子评分：只落库对比，任何异常都不影响正式评分与信号
-        try:
-            from app.services.shadow_score import shadow_snapshot
-            shadow = shadow_snapshot(analysis, oi_change_pct)
-            self._db.save_shadow_score(item.symbol, item.timeframe, shadow, oi_change_pct)
-        except Exception as exc:  # noqa: BLE001
-            import logging
-            logging.getLogger(__name__).warning("shadow score skipped: %s", exc)
-
         previous_price = self._latest_prices.get(item.symbol, {}).get("price", ticker["price"])
         ticker["previous_price"] = previous_price
 
@@ -213,6 +204,15 @@ class MarketService:
 
         # 向后兼容：funding_rate dict 格式（analysis.py 旧代码依赖）
         signal["funding_rate_dict"] = funding_rate or {}
+
+        # 影子评分：只落库对比，任何异常都不影响正式评分与信号
+        try:
+            from app.services.shadow_score import shadow_snapshot
+            shadow = shadow_snapshot(analysis, oi_change_pct)
+            self._db.save_shadow_score(item.symbol, item.timeframe, shadow, oi_change_pct)
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning("shadow score skipped: %s", exc)
 
         # v2.2：方向抖动控制 — 三层过滤
         if item.symbol not in self._trackers:
