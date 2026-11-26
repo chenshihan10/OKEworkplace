@@ -25,6 +25,7 @@ class SignalDB:
         self.db_path = os.path.join(db_dir, 'signals.db')
         # 每个币种最近一次“已落库”的判断指纹与快照时间（进程内，重启后首条会重写）
         self._signal_state: Dict[str, dict] = {}
+        self._shadow_last: Dict[str, float] = {}
         self._init_db()
 
     def _connect(self, timeout: float = 10) -> sqlite3.Connection:
@@ -52,6 +53,19 @@ class SignalDB:
                 data_source TEXT DEFAULT 'okx',
                 raw_signal TEXT,
                 decision_trace TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )''')
+            # 影子评分：与正式评分并存，供后续真实结果对比；不参与任何判断
+            conn.execute('''CREATE TABLE IF NOT EXISTS shadow_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                timeframe TEXT,
+                direction TEXT,
+                official_score INTEGER,
+                shadow_score INTEGER,
+                official_oi INTEGER,
+                shadow_oi INTEGER,
+                oi_change_pct REAL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )''')
             conn.execute('''CREATE TABLE IF NOT EXISTS analysis_snapshots (
@@ -336,8 +350,29 @@ class SignalDB:
             )
             return cursor.lastrowid
 
-    # ─── 订单流采样 ───────────────────────────────────────
+    # ─── 影子评分（只记录，不参与判断） ─────────────────
 
+    def save_shadow_score(self, symbol: str, timeframe: str, snapshot: dict,
+                          oi_change_pct: float, min_interval_seconds: int = 300) -> Optional[int]:
+        """写入影子评分快照；同币种按 min_interval_seconds 节流。"""
+        key = f"{symbol}:{timeframe}"
+        now = time.time()
+        if now - self._shadow_last.get(key, 0) < min_interval_seconds:
+            return None
+        self._shadow_last[key] = now
+        with self._connect() as conn:
+            cursor = conn.execute(
+                '''INSERT INTO shadow_scores (symbol, timeframe, direction,
+                   official_score, shadow_score, official_oi, shadow_oi, oi_change_pct)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                (symbol, timeframe, snapshot.get('direction'),
+                 snapshot.get('official_score'), snapshot.get('shadow_score'),
+                 snapshot.get('official_oi_score'), snapshot.get('shadow_oi_score'),
+                 float(oi_change_pct or 0))
+            )
+            return cursor.lastrowid
+
+    # ─── 订单流采样 ───────────────────────────────────────
     def save_order_flow_snapshot(self, symbol: str, window_minutes: int, data: dict,
                                  payload: Optional[dict] = None) -> int:
         """写入一条订单流采样（默认 5 分钟一条，不是实时逐笔）。"""
