@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sys
+import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -56,6 +58,35 @@ def _save_watchlist(items: list[WatchItem]) -> None:
         logging.getLogger(__name__).warning("Failed to save watchlist: %s", e)
 
 
+# OI 变化率的回看窗口（秒）：15m 周期看 15 分钟，其余周期统一看 1 小时。
+# 仅调整取数口径，评分权重与阈值保持不变。
+OI_LOOKBACK_SECONDS = {"15m": 15 * 60, "1H": 60 * 60, "4H": 60 * 60}
+OI_MAX_HISTORY_SECONDS = 2 * 60 * 60
+
+
+def calc_oi_change_pct(samples, now_ts: float, lookback_s: int) -> float:
+    """按时间窗口计算 OI 变化率（%）。
+
+    samples 为升序 (ts, open_interest)；窗口覆盖不足 90% 时返回 0，
+    避免启动初期用几秒钟的样本冒充 15m/1H 变化率。
+    """
+    if not samples:
+        return 0.0
+    current = samples[-1][1]
+    if current <= 0:
+        return 0.0
+    if now_ts - samples[0][0] < lookback_s * 0.9:
+        return 0.0
+    target = now_ts - lookback_s
+    prev = None
+    for ts, oi in samples:
+        if ts <= target and oi > 0:
+            prev = oi
+    if prev is None:
+        return 0.0
+    return round((current - prev) / prev * 100, 4)
+
+
 def _analysis_to_dict(analysis) -> dict:
     """将 AnalysisResult dataclass 转为可 JSON 序列化的 dict"""
     d = asdict(analysis)
@@ -74,7 +105,8 @@ class MarketService:
         self._latest_prices = {}
         self._latest_signals_cache = {}
         self._prev_cvd = {}
-        self._prev_oi = {}  # v2.1：记录上次 OI 值用于计算变化百分比
+        self._prev_oi = {}  # 兼容保留：不再参与评分
+        self._oi_samples: dict[str, deque] = {}  # 每币种的 OI 采样序列，用于 15m/1H 变化率
         self._trackers: dict[str, DirectionTracker] = {}  # v2.2：每个币种一个方向跟踪器
         self._alerts = AlertStore(settings.signal_cooldown_minutes)
         self._db = SignalDB()  # v2.2：SQLite 持久化
@@ -137,13 +169,16 @@ class MarketService:
         trades = f_trades.result()
         books = f_books.result()
 
-        # v2.1：自行计算 OI 变化百分比（OKX API 不直接提供）
+        # OI 变化口径：15m 周期取 15 分钟变化，其余周期取 1 小时变化；
+        # 窗口不足时返回 0，评分权重与阈值不变。
         current_oi = open_interest.get("open_interest", 0) or 0
-        prev_oi = self._prev_oi.get(item.symbol)
-        if prev_oi and prev_oi > 0:
-            oi_change_pct = round((current_oi - prev_oi) / prev_oi * 100, 4)
-        else:
-            oi_change_pct = 0.0
+        now_ts = time.time()
+        samples = self._oi_samples.setdefault(item.symbol, deque())
+        samples.append((now_ts, current_oi))
+        while samples and now_ts - samples[0][0] > OI_MAX_HISTORY_SECONDS:
+            samples.popleft()
+        lookback = OI_LOOKBACK_SECONDS.get(item.timeframe, 60 * 60)
+        oi_change_pct = calc_oi_change_pct(samples, now_ts, lookback)
         open_interest["change_pct"] = oi_change_pct
         self._prev_oi[item.symbol] = current_oi
 
