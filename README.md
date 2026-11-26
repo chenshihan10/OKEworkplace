@@ -1,219 +1,269 @@
-# OKEworkplace
+# 量化分析终端 · OKEworkplace
 
-<img width="2727" height="1342" alt="image" src="https://github.com/user-attachments/assets/94ae4f94-7aa3-445d-8893-6492c1f52f2a" />
+一个面向 **OKX 永续合约** 的本地量化分析终端：实时行情 → 五维评分 → 方向判定 → 决策追溯 → 多周期/订单流验证 → 手工记账与风控 → 绩效复盘。
 
-> 加密货币量化分析终端。
+> **定位**：只做分析与决策辅助，**不自动下单、不托管资金、不提供投资建议**。
+> 手工交易在 OKX 手机端完成，本程序负责给出结构化判断与风险提示。
 
-[![version](https://img.shields.io/badge/version-2.3.0.0-blue)](VERSION)
-[![python](https://img.shields.io/badge/python-3.10+-green)](https://www.python.org/)
-[![license](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
+<p>
+  <img alt="version" src="https://img.shields.io/badge/version-2.5.0.0-3b82f6">
+  <img alt="python" src="https://img.shields.io/badge/python-3.10+-10b981">
+  <img alt="fastapi" src="https://img.shields.io/badge/FastAPI-0.11x-009688">
+  <img alt="frontend" src="https://img.shields.io/badge/frontend-ESModule%20%C2%B7%20no%20build-8b5cf6">
+  <img alt="storage" src="https://img.shields.io/badge/storage-SQLite%20WAL-f59e0b">
+</p>
 
-## 功能
+---
 
-### 实时行情监控
-- BTC-USDT-SWAP / ETH-USDT-SWAP / SOL-USDT-SWAP（可扩展）
-- 最新价格 / 24h 涨跌幅 / 成交量 / OI / 资金费率 / 标记价格 / 指数价格
-- 1 秒刷新（WebView 直连 FastAPI 内存缓存）
-- **真实数据校验（v2.3.0.0）**：无数据时界面显示「数据不可用」，不再用随机数兜底
-- **版本可见**：窗口标题与页头角标都显示当前版本，数值来自 `/health`
+## 界面预览
 
-### v2.2 信号方向抖动控制 ✅ 新增
-- **三层过滤**：趋势缓冲（12次多数表决）→ 迟滞带（连续确认翻转）→ 冷却期（5分钟）
-- **时间衰减加权投票**：越新的信号权重越高
-- v2.1 实测：15分钟内方向翻转11次 → v2.2：**0次抖动**
+### 概览：实时行情与当期评分
+![概览](docs/images/overview.jpg)
 
-### v2.2 决策追溯与置信度 ✅ 新增
-- **Decision Trace**：记录 EMA/RSI/MACD/OI/成交量/费率 各指标贡献分和判定依据
-- **Confidence**：基于一致性+评分强度+波动率的三因素加权可信度（0-100%）
-- **Trend Phase**：趋势形成中/确认/强化/衰减/结束 实时检测
+### 交易信号：方向、评分与触发条件
+![交易信号](docs/images/signals.jpg)
 
-### v2.1 五维对称评分引擎
-| 维度 | 权重 | 内容 |
-|------|:--:|------|
-| 趋势评分 | 30 | EMA 排列 + RSI 区间 + MACD 状态 + OI 验证 |
-| 动量评分 | 20 | K线动量 + 价格位置 + 金叉/死叉检测 |
-| 成交量评分 | 20 | 量能对比 + 量价配合 + 放量突破 |
-| OI 评分 | 20 | OI 方向 + 价-OI 配合 |
-| 资金费率评分 | 10 | 费率健康度（反向指标） |
+### 多周期：15m / 1H / 4H 共振与分歧
+![多周期](docs/images/multi-timeframe.jpg)
 
-**评分等级**：强烈关注(85+) → 重点关注(70+) → 观察(55+) → 中性(40+) → 放弃(<40)
+### 订单流：买卖压力与 CVD
+![订单流](docs/images/orderflow.jpg)
 
-### 技术指标
-- EMA (20/60/120)、RSI (14)、MACD (12/26/9)、ATR (14)
-- EMA 金叉/死叉检测、MACD 金叉/死叉检测
-- 资金行为识别（11 种模式）
+### 订单与风控：组合风险、手工持仓、止损止盈
+![订单与风控](docs/images/orders-risk.jpg)
 
-### 独立 GUI 窗口
-- 基于 pywebview + Windows WebView2，不依赖浏览器
-- **v2.2 三选项关闭对话框**：退出 / 最小化到系统托盘 / 取消
-- 系统托盘图标（右键菜单：显示窗口 / 退出程序）
-- 端口自动递增（8000~8019）
-- 四级代理回退链（环境变量 → 注册表 → .env → 直连）
+### 绩效：胜率、盈亏、上下文分桶
+![绩效](docs/images/performance.jpg)
 
-### v2.2 历史信号持久化 ✅ 新增
-- SQLite 存储所有信号和分析快照
-- `GET /api/signals/history/{symbol}` 查询历史记录
+---
+
+## 功能总览
+
+| 模块 | 说明 |
+|---|---|
+| 实时行情 | OKX 公共行情，代理自动回退；断流保留上次值并标注数据年龄 |
+| 五维评分 | 趋势 30 / 动量 20 / 成交量 20 / 持仓量 20 / 资金费率 10，输出 0-100 分 |
+| 方向判定 | EMA / RSI / MACD 与 OI 共振，附稳定性与确认机制（冻结区，改动需专项授权） |
+| 多周期 MTF | 15m / 1H / 4H 独立评分与方向，标注周期分歧与逆大周期风险 |
+| 订单流 | REST 采样主动买卖量、买卖盘不平衡与 CVD（window / session），带缺口与过期标记 |
+| 手工订单与风控 | 本地记账、止损止盈、价格触及提醒、组合名义价值/集中度/单笔风险占比 |
+| 绩效复盘 | 胜率、盈亏比、期望、最大回撤、按上下文（方向/评分/周期）分桶 |
+| 决策追溯 | 每次方向变化记录触发条件，支持事后解释与回看 |
+| 历史与备份 | 信号采样入库、WAL 并发、三库自动备份与保留清理 |
+| 回测与研究 | 历史 K 线重放现有评分，输出胜率/期望/盈亏比/回撤与基线对照 |
+| 实盘只读 | 私有只读客户端 + 账户快照/持仓/成交/风险/对账，**当前默认关闭** |
+| 影子评分 | 强度感知的 OI 分只做并行记录，**不参与任何判断** |
+
+---
+
+## 当前状态（重要）
+
+- 版本：`VERSION = 2.5.0.0`，当前为测试版，未打包发布。
+- **实盘 Tab 默认隐藏**：`OKE_PRIVATE_READ_ENABLED=false`，不注册账户调度、不创建空库、前端不显示入口。
+  配好只读 Key（固定出口 IP 白名单）后置为 `true` 即可恢复。
+- **P2 账户风险/对账未经真实数据验收**：因 OKX 出口 IP 变动导致 401，仅完成离线单测与渲染验证。
+- **影子评分不参与正式判断**：`score / direction / level / risk` 全部走原路径，冻结区零改动。
+- 资金费率历史接口实际只有最近 **100 条（约 33 天）**，OI 历史约 **30 天**；长周期回测无法包含这两个维度。
+- 回测结论：当前评分**没有稳定可交易的正向 edge**，详见 [第 8 步实验记录](docs/第8步_回测与评分实验_20261126.md)。
+
+---
 
 ## 快速开始
 
-### 一键启动（推荐）
+### 环境
 
-双击 `dist\current\OKEworkplace_v2.3.0.0.exe`，或桌面快捷方式 `OKEworkplace`（EXE 目录下自动生成 `data/signals.db`、`data/user_trades.db`）。
+- Python 3.10+
+- 依赖见 `backend/requirements.txt`
+- 可选：本机 HTTP 代理（默认探测 `127.0.0.1:12334`，不可用时自动尝试直连）
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+pip install -r backend/requirements.txt
+copy backend\.env.example backend\.env
+```
 
 ### 开发模式
 
 ```bash
 cd backend
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 浏览器模式
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-# 打开 http://127.0.0.1:8000/index.html
-
-# 独立窗口模式（日常开发统一用这个方式验证）
-python entry_exe.py
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8010
 ```
 
-> 日常改动只在开发环境验证；正式打包必须等用户明确「审查通过、可以封包」。
+打开 `http://127.0.0.1:8010`。`?dev=1` 可开启前端文件变更自动刷新（正式版无此参数）。
 
-### 发布流程
+### 桌面窗口模式
 
-```
-开发验证（python backend/entry_exe.py）
-  → 用户审查界面与数据
-  → 用户明确批准封包
-  → PyInstaller 打包
-  → 覆盖 dist\current（旧产物移入 dist\archive）
+```bash
+cd backend
+..\.venv\Scripts\pythonw.exe ..\entry_exe.py
 ```
 
-- 版本号只改根目录 `VERSION`，`/health`、窗口标题、打包目录名、界面角标全部跟随
-- 详见 [docs/20261120_真实行情修复与发布约定.md](docs/20261120_真实行情修复与发布约定.md)
+入口会探测可用端口（8000 被占用时顺延），并注入一次性本地 token。
+
+### 打包
+
+```bash
+pyinstaller OKEworkplace.spec
+```
+
+打包只包含 `.env.example`；真实 `.env`、数据库与日志不会进入产物。
+
+---
+
+## 五维评分
+
+| 维度 | 权重 | 主要输入 |
+|---|---|---|
+| 趋势 | 30 | EMA 排列、价格位置、关键位 |
+| 动量 | 20 | RSI、MACD 柱与交叉 |
+| 成交量 | 20 | 量比、放量方向一致性 |
+| 持仓量 | 20 | OI 变化率（15m 周期取 15 分钟，1H/4H 取 1 小时） |
+| 资金费率 | 10 | 当前费率与拥挤度反向修正 |
+
+输出：`score`（0-100）、`direction`（LONG / SHORT / NEUTRAL）、五维分量、触发条件。
+评分函数位于冻结区（`backend/app/model/market_score.py`、`services/signal_engine.py`），
+权重与阈值调整必须单独立项并明确授权。
+
+---
 
 ## 项目结构
 
 ```
 OKEworkplace/
-├── VERSION                        # 版本单一真源（当前 2.3.0.0）
-├── dist/
-│   ├── current/                   # 当前正式版（每次封包覆盖）
-│   └── archive/                   # 历史产物（保留，不作启动入口）
-├── README.md
-├── docs/
-│   ├── V2.1_方案设计文档.md          # v2.1 设计规格
-│   ├── V2.2_需求预案文档.md          # v2.2 需求预案 + 实施报告
-│   ├── V2.3_用户订单追踪方案设计.md   # v2.3 订单追踪方案
-│   ├── V3.0_方案设计文档.md          # v3.0 自学习方案
-│   ├── V3.0_需求预案文档.md          # v3.0 需求预案（调整版）
-│   ├── OKX-Agent-Trade-Kit.md      # OKX Agent Trade Kit 官方能力存档
-│   ├── 20261120_真实行情修复与发布约定.md
-│   ├── 方案盘点_20261120.md         # 既有方案 vs 代码现状盘点
-│   └── 交接文档.md                    # 项目交接文档
-├── backend/
-│   ├── entry_exe.py                # GUI 窗口启动 + pystray 托盘
-│   ├── OKEworkplace.spec           # PyInstaller 打包配置（已纳入版本管理）
-│   ├── .env.example                # 配置模板
-│   ├── app/
-│   │   ├── main.py                 # FastAPI 应用（版本取自 VERSION）
-│   │   ├── core/
-│   │   │   ├── config.py           # 配置管理 + APP_VERSION 读取
-│   │   │   └── scheduler.py        # 5s 定时调度（max_instances=3）
-│   │   ├── model/
-│   │   │   ├── market_score.py     # 五维对称评分引擎
-│   │   │   └── capital_behavior.py # 资金行为分析
-│   │   ├── routes/
-│   │   │   ├── analysis.py         # /api/analysis/{symbol}（含 trace/confidence/phase）
-│   │   │   ├── monitor.py          # /api/monitor/snapshot
-│   │   │   ├── orders.py           # v2.3 订单 CRUD + 价格触及检测
-│   │   │   └── coins.py            # 币种管理
-│   │   ├── services/
-│   │   │   ├── signal_engine.py    # 统一信号聚合入口
-│   │   │   ├── market_service.py   # 行情服务（并行抓取 + Tracker/DB/Bus）
-│   │   │   ├── direction_tracker.py # v2.2 方向三层过滤
-│   │   │   ├── decision_engine.py  # v2.2 决策追溯+置信度+趋势阶段
-│   │   │   ├── order_manager.py    # v2.3 订单管理（user_trades.db）
-│   │   │   ├── db_store.py         # v2.2 SQLite 持久化
-│   │   │   ├── event_bus.py        # v2.2 事件总线
-│   │   │   ├── indicator_service.py # EMA/RSI/MACD/ATR
-│   │   │   ├── oke_client.py       # OKX API 客户端（certifi 显式校验）
-│   │   │   ├── network_service.py  # 网络可达性探测
-│   │   │   ├── market_regime.py    # 市场状态分类（牛/熊/震荡/高波动）
-│   │   │   └── alert_store.py      # v2.2 告警去重
-│   │   └── strategy/
-│   │       └── trading_rules.py    # v2.0 规则（已降级）
-├── frontend/
-│   ├── index.html                  # 前端监控面板（ES6 module）
-│   └── src/                        # v2.2 模块化架构
-│       ├── main.js                 # 调度中枢（含版本角标加载）
-│       ├── api/                    # API 客户端 (3 files)
-│       ├── stores/                 # 状态管理 (4 files)
-│       ├── render/                 # 渲染模块 (5 files)
-│       ├── views/                  # 标签页管理
-│       └── utils/                  # 工具函数
-└── tests/
-    ├── test_smoke.py
-    └── monitor_phase2.py           # v2.2 监控验证脚本
+├─ backend/
+│  ├─ app/
+│  │  ├─ core/            # 配置、日志、启动参数
+│  │  ├─ model/           # 冻结区：评分模型、分析结果结构
+│  │  ├─ routes/          # analysis / mtf / orderflow / risk / account / predictions / system
+│  │  ├─ services/        # 行情、指标、信号、存储、备份、账户、影子评分、维护任务
+│  │  └─ main.py          # FastAPI 入口、路由注册、调度器
+│  ├─ tests/              # 离线单测（账户、存储、路由、OI 口径、影子评分、启动隔离）
+│  ├─ tools/
+│  │  └─ backtest_replay.py   # 历史 K 线回测（只读复用评分）
+│  └─ data/               # 运行态数据库与备份（不入库）
+├─ frontend/
+│  ├─ index.html          # 单页壳 + Tab 容器
+│  └─ src/
+│     ├─ api/ stores/ render/ views/ utils/   # 原生 ES Module，无构建
+├─ docs/                  # 方案、交接文档、实验记录、界面截图
+├─ entry_exe.py           # 桌面窗口入口
+└─ OKEworkplace.spec      # PyInstaller 配置
 ```
 
-## API 端点
+### 运行态数据
 
-### v2.2 / v2.3 新增
-| 端点 | 说明 |
-|------|------|
-| `GET /api/signals/history/{symbol}` | 历史信号查询 |
-| `GET /api/analysis/{symbol}` | [增强] 含 confidence / decision_trace / trend_phase / mark_price |
-| `POST /api/v2.3/orders` | v2.3 开单 |
-| `GET /api/v2.3/orders` | v2.3 当前持仓 |
-| `POST /api/v2.3/orders/{id}/close` | v2.3 平仓 |
-| `GET /api/v2.3/orders/history` | v2.3 历史订单 |
-| `GET /api/v2.3/orders/summary` | v2.3 订单统计 |
-| `GET /api/v2.3/price-levels/check` | v2.3 价格触及检测（含 30 分钟冷却） |
-| `GET /api/market-regime/{symbol}` | 市场状态（牛/熊/震荡/高波动） |
+| 文件 | 内容 |
+|---|---|
+| `backend/data/signals.db` | 信号采样、决策追溯、上下文分桶、订单流采样、影子评分 |
+| `backend/data/user_trades.db` | 手工订单与平仓记录 |
+| `backend/data/live_account.db` | 账户快照/成交/配置缓存（仅实盘只读启用时创建） |
+| `backend/data/backups/` | 三库备份，按前缀与 `keep` 策略清理 |
 
-### 完整端点
-| 端点 | 说明 |
-|------|------|
-| `GET /health` | 健康检查（含 version） |
-| `GET /api/monitor/snapshot` | 全量快照（行情 + 信号 + 告警） |
-| `GET /api/analysis/{symbol}` | 单币种完整分析 |
-| `GET /api/signals/history/{symbol}` | 历史信号 |
-| `GET /api/coins` | 币种列表管理 |
-| `GET /network/status` | 网络状态 |
+所有库使用 WAL + `busy_timeout`；备份带表行数签名，恢复前会自动校验。
+
+---
+
+## 主要接口
+
+| 分组 | 示例 |
+|---|---|
+| 行情与快照 | `/api/monitor/snapshot`、`/network/status` |
+| 单币分析 | `/api/analysis/{symbol}` |
+| 多周期 | `/api/v3/mtf/...` |
+| 订单流 | `/api/v3/orderflow/...` |
+| 风控与手工单 | `/api/v3/risk/...` |
+| 绩效 | `/api/v3/performance/context-summary` |
+| 实盘只读（默认关闭） | `/api/v3/account/status|summary|positions|margin|fills|config|risk|reconciliation` |
+
+- 完整列表以 FastAPI 自动文档为准：`http://127.0.0.1:<port>/docs`。
+- 本地 token：桌面壳通过 URL 注入 `window.__OKE_TOKEN`，写请求与账户路由自动携带 `x-oke-token`；
+  未配置 `OKE_LOCAL_TOKEN` 时校验自动跳过。
+
+---
+
+## 配置
+
+核心变量（详见 `backend/.env.example`）：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `OKE_BASE_URL` | OKX | 行情/公共接口地址 |
+| `OKE_LOCAL_TOKEN` | 空 | 本地接口 token；空则不校验 |
+| `OKE_PROXY_*` | 自动 | 代理探测与回退 |
+| `OKE_PRIVATE_READ_ENABLED` | false | 实盘只读总开关 |
+| `OKE_PRIVATE_READ_API_KEY/SECRET_KEY/PASSPHRASE` | 空 | 只读子账户凭证 |
+| `OKE_DISABLE_SCHEDULER` | 0 | 测试/离线启动时禁用调度器 |
+| `OKE_ORDERFLOW_RETENTION_DAYS` | 7 | 订单流采样保留天数 |
+| `OKE_ACCOUNT_RECONCILE_TOLERANCE_PCT` | 20 | 本地/实盘对账容差 |
+
+`.env` 已在 `.gitignore` 中；明文凭证文件（如 `api keys/`、`*api*.txt`）也被忽略，但仍建议不要放进仓库目录。
+
+---
+
+## 测试
+
+```bash
+# 逐文件运行（均为纯离线，不发起真实 OKX 请求）
+python backend/tests/test_private_client.py
+python backend/tests/test_account_store.py
+python backend/tests/test_account_service.py
+python backend/tests/test_account_routes.py
+python backend/tests/test_maintenance.py
+python backend/tests/test_app_startup.py
+python backend/tests/test_oi_change.py
+python backend/tests/test_shadow_score.py
+
+# 或使用 pytest
+python -m pytest backend/tests -q
+```
+
+测试通过 `OKE_DISABLE_SCHEDULER=1` 与假响应隔离，不会注册生产调度、不会触达外部网络。
+
+---
+
+## 回测
+
+```bash
+cd backend
+
+# 全历史（OI / funding 均按 0）
+python tools/backtest_replay.py
+
+# 最近 30 天，OI 使用真实历史
+python tools/backtest_replay.py --days 30 --oi
+
+# 再加真实资金费率（实际只有约 33 天）
+python tools/backtest_replay.py --days 30 --oi --funding
+```
+
+- 结果默认输出 `backend/data/backtest_results.json`（运行态，不入库）。
+- 结论与数据边界见 [第 8 步实验记录](docs/第8步_回测与评分实验_20261126.md)。
+
+---
 
 ## 文档
 
-| 文档 | 路径 |
-|------|------|
-| 真实行情修复与发布约定（2026-11-20） | [docs/20261120_真实行情修复与发布约定.md](docs/20261120_真实行情修复与发布约定.md) |
-| 既有方案盘点（2026-11-20） | [docs/方案盘点_20261120.md](docs/方案盘点_20261120.md) |
-| OKX Agent Trade Kit 官方能力存档 | [docs/OKX-Agent-Trade-Kit.md](docs/OKX-Agent-Trade-Kit.md) |
-| v2.3 订单追踪方案 | [docs/V2.3_用户订单追踪方案设计.md](docs/V2.3_用户订单追踪方案设计.md) |
-| v2.2 需求预案 + 实施报告 | [docs/V2.2_需求预案文档.md](docs/V2.2_需求预案文档.md) |
-| v2.1 方案设计 | [docs/V2.1_方案设计文档.md](docs/V2.1_方案设计文档.md) |
-| v3.0 方案设计 | [docs/V3.0_方案设计文档.md](docs/V3.0_方案设计文档.md) |
-| v3.0 需求预案 | [docs/V3.0_需求预案文档.md](docs/V3.0_需求预案文档.md) |
-| 项目交接文档 | [docs/交接文档.md](docs/交接文档.md) |
+| 文档 | 内容 |
+|---|---|
+| [交接文档](docs/交接文档.md) | 项目全貌、历史阶段、当前状态与文件地图 |
+| [给 GPT 协作者](docs/交接文档_给GPT协作者_20261124.md) | 外部协作者上手说明、边界与禁止事项 |
+| [第 5 步](docs/第5步_多周期_风险管理_订单流_设计与范围.md) | 多周期、风控、订单流设计与实施状态 |
+| [第 6 步](docs/第6步_决策追溯_绩效分桶_历史入库_范围与规划.md) | 决策追溯、绩效分桶、历史入库规划 |
+| [第 7 步](docs/第7步_实盘只读实施方案与GPT方案评审.md) | 实盘只读方案、接口契约与实施状态 |
+| [第 8 步](docs/第8步_回测与评分实验_20261126.md) | 回测方法、两轮结论、OI/funding 边界、影子评分 |
 
-## 技术栈
+---
 
-- **后端**: FastAPI + APScheduler + PyWebView + SQLite
-- **数据源**: OKX V5 REST API
-- **前端**: HTML/CSS/JS（ES6 modules + Event Bus 架构）
-- **系统托盘**: pystray + Pillow
-- **打包**: PyInstaller (.spec, --windowed)
+## 安全与合规
 
-## 版本历史
+- 不保存、不打印、不提交任何 API Key / Secret / Passphrase / 签名。
+- 实盘只读使用独立子账户与固定出口 IP 白名单，且默认关闭。
+- 不自动下单，不修改 OKX 账户设置，不做资金划转。
+- 所有分析结论仅供研究参考，交易决策与风险由使用者自行承担。
 
-| 版本 | 日期 | 主要变更 |
-|------|------|------|
-| v2.3.0.0 | 2026-11-20 | 真实行情链路修复（certifi/删假数据）、指数价接口修正、刷新并行化、版本单一真源 VERSION、dist\current 约定、桌面快捷方式 |
-| v2.3.0 | 2026-07-25 | 用户订单追踪（开单/平仓/历史/统计）、价格触及检测、概览页价格自适应 |
-| v2.2.0 | 2026-07-24 | 方向抖动控制、决策追溯、置信度、趋势阶段、SQLite持久化、pystray托盘、前端模块化 |
-| v2.1.0 | 2026-07-23 | 五维对称评分引擎、方向判定、风险评估、独立 GUI 窗口、OI 修复 |
-| v2.0.0 | 2026-07-20 | 市场评分系统、资金行为分析、可解释信号 |
-| v0.1.0 | 2026-07-07 | 基础骨架、OKX API 接入、行情监控 |
+## 版本
 
-## License
-
-MIT
+- 当前：`2.5.0.0`（2026-11-26）
+- 本阶段重点：实盘只读与账户能力（默认关闭）、多周期/订单流/风控、绩效分桶、回测工具、OI 口径修正、影子评分双轨。
+- 更早版本见 git 提交历史与 `docs/交接文档.md`。
