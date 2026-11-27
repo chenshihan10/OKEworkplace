@@ -30,6 +30,11 @@ export function switchTab(tabName) {
     window.__okeRefreshPerformance();
   }
 
+  // 研究页打开时立即刷新质量视图
+  if (tabName === 'research' && typeof window.__okeRefreshResearch === 'function') {
+    window.__okeRefreshResearch();
+  }
+
   // 多周期页打开时立即拉一次缓存
   if (tabName === 'mtf' && typeof window.__okeRefreshMtf === 'function') {
     window.__okeRefreshMtf();

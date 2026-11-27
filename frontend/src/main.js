@@ -10,6 +10,7 @@ import { renderSignals } from './render/SignalCard.js';
 import { renderWatchlist } from './render/WatchlistCard.js';
 import { initOrderCard, renderOrders } from './render/OrderCard.js';
 import { renderPerformance } from './render/PerformanceCard.js';
+import { renderResearch } from './render/ResearchCard.js';
 import { refreshMtf, getMtfItems } from './stores/mtfStore.js';
 import { renderMtf } from './render/MtfCard.js';
 import { refreshOrderflow } from './stores/flowStore.js';
@@ -504,6 +505,12 @@ function init() {
   setInterval(refresh, CONFIG.refreshInterval);
   // 绩效页数据变化慢，30 秒刷新即可
   setInterval(renderPerformance, 30000);
+
+  // 研究页：绩效质量只读视图，60 秒刷新一次，切到该 Tab 时立即拉取
+  const refreshResearchView = () => renderResearch().catch(() => {});
+  window.__okeRefreshResearch = refreshResearchView;
+  refreshResearchView();
+  setInterval(refreshResearchView, 60000);
   
   // 关闭时通知后端（热刷新/手动刷新时不通知，否则会把后端一起关掉）
   window.addEventListener('beforeunload', function() {
