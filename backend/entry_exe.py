@@ -7,6 +7,8 @@ import time
 import urllib.request
 import urllib.parse
 import json
+import logging
+import logging.handlers
 import signal
 import secrets
 import socket
@@ -61,17 +63,88 @@ HOST = "127.0.0.1"
 PORT = 8000
 BASE_URL = f"http://{HOST}:{PORT}"
 
+# 应用日志：固定放在程序目录/logs 下，按天轮转
+_APP_LOG_DIR = _LOG_DIR / "logs"
+_APP_LOG_FILE = _APP_LOG_DIR / "app.log"
+_MUTEX_HANDLE = None
 
-def find_available_port(start_port=8000, max_attempts=20):
-    """
-    自动端口递增策略 - 主流应用的标准做法
-    参考：VS Code、JetBrains 系列、各种 IDE 都使用此策略
-    """
-    for port in range(start_port, start_port + max_attempts):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex((HOST, port)) != 0:
-                return port
-    raise RuntimeError(f"无法找到可用端口（{start_port}~{start_port + max_attempts - 1} 均被占用）")
+
+def _setup_logging() -> None:
+    """应用日志按天轮转（保留 14 天），并接管未捕获异常。"""
+    try:
+        _APP_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.TimedRotatingFileHandler(
+            _APP_LOG_FILE, when="midnight", backupCount=14, encoding="utf-8"
+        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        root = logging.getLogger()
+        root.setLevel(logging.INFO)
+        if not any(isinstance(h, logging.handlers.TimedRotatingFileHandler)
+                   for h in root.handlers):
+            root.addHandler(handler)
+        # 调度器每次任务都打 INFO，噪声过大；只保留告警
+        logging.getLogger("apscheduler").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+        def _hook(exc_type, exc, tb):
+            root.error("未捕获异常", exc_info=(exc_type, exc, tb))
+            sys.__excepthook__(exc_type, exc, tb)
+
+        sys.excepthook = _hook
+        threading.excepthook = lambda args: root.error(
+            "线程未捕获异常",
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+        )
+    except Exception:
+        pass
+
+
+def _notify(title: str, text: str) -> None:
+    """打包环境没有控制台，关键提示用系统弹窗；OKE_SILENT=1 时只写日志。"""
+    logging.getLogger(__name__).warning("%s: %s", title, text.replace("\n", " "))
+    if os.getenv("OKE_SILENT") == "1" or not sys.platform.startswith("win"):
+        return
+    try:
+        ctypes.windll.user32.MessageBoxW(0, text, title, 0x00000040)
+    except Exception:
+        pass
+
+
+def _acquire_single_instance() -> bool:
+    """命名互斥体：同一登录会话只允许一个实例，避免两个进程写同一个数据库。"""
+    global _MUTEX_HANDLE
+    if not sys.platform.startswith("win"):
+        return True
+    try:
+        kernel32 = ctypes.windll.kernel32
+        _MUTEX_HANDLE = kernel32.CreateMutexW(
+            None, False, "Local\\OKEworkplace_SingleInstance"
+        )
+        if not _MUTEX_HANDLE:
+            return True
+        # ERROR_ALREADY_EXISTS
+        return kernel32.GetLastError() != 183
+    except Exception:
+        return True
+
+
+def _focus_existing_window() -> bool:
+    """把已运行的窗口恢复到前台；成功返回 True。"""
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.FindWindowW(None, APP_TITLE)
+        if hwnd:
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            user32.SetForegroundWindow(hwnd)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex((HOST, port)) == 0
 
 
 def _wait_for_server(port, timeout=30):
@@ -251,6 +324,37 @@ def _start_tray_icon(window_ref):
         )
 
         icon = pystray.Icon("OKEworkplace", icon_img, APP_TITLE, menu)
+
+        def _stale_loop():
+            """数据停更巡检：60 秒一次，超阈值弹托盘通知（10 分钟内不重复）。"""
+            from app.services.health_monitor import should_alert_stale
+
+            threshold = int(os.getenv("OKE_STALE_ALERT_SECONDS", "300"))
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            last_alert = None
+            while True:
+                time.sleep(60)
+                try:
+                    with opener.open(f"http://{HOST}:{PORT}/network/status", timeout=3) as resp:
+                        info = json.loads(resp.read().decode("utf-8"))
+                    age = info.get("data_age_seconds")
+                    now = time.time()
+                    if should_alert_stale(age, threshold, last_alert, now):
+                        last_alert = now
+                        message = f"行情数据已 {age} 秒未更新，请检查代理或网络。"
+                        logging.getLogger(__name__).warning("数据停更告警: %s", message)
+                        try:
+                            icon.notify(message, "OKEworkplace 数据停更")
+                        except Exception:
+                            pass
+                except Exception:
+                    continue
+
+        threading.Thread(target=_stale_loop, daemon=True).start()
+        logging.getLogger(__name__).info(
+            "数据停更巡检已启动（阈值 %ss，冷却 600s）",
+            os.getenv("OKE_STALE_ALERT_SECONDS", "300"),
+        )
         icon.run()
     except ImportError:
         pass  # 无 pystray 时静默跳过
@@ -341,6 +445,17 @@ if __name__ == "__main__":
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
+    _setup_logging()
+
+    # 单实例：已有进程在跑时聚焦原窗口并退出，避免两个进程写同一个数据库
+    if not _acquire_single_instance():
+        focused = _focus_existing_window()
+        logging.getLogger(__name__).warning("检测到已有实例，本次启动退出（聚焦窗口=%s）", focused)
+        if not focused:
+            _notify("OKEworkplace 已在运行",
+                    f"程序已在运行（端口 {PORT}）。\n请从任务栏或系统托盘打开原窗口。")
+        sys.exit(0)
+
     print("╔══════════════════════════════════════╗")
     print("║     OKEworkplace - 交易分析终端      ║")
     print("╠══════════════════════════════════════╣")
@@ -348,14 +463,38 @@ if __name__ == "__main__":
     print("╚══════════════════════════════════════╝")
     print()
 
-    # 0. 自动选择可用端口
-    port = find_available_port(8000)
-    if port != 8000:
-        print(f"  ⚠ 端口 8000 被占用，自动使用端口 {port}")
-
     # 清理上一次的报错记录与下载文件的「来自 Internet」标记（否则 .NET 拒绝加载）
     _reset_startup_error_log()
     _clear_zone_identifier()
+
+    # 固定端口：被占用时明确提示，不再自动漂移（避免文档/快捷方式对不上）
+    if _port_in_use(PORT):
+        _notify("端口被占用",
+                f"端口 {PORT} 已被其他程序占用。\n"
+                "请关闭占用该端口的程序后重新启动（程序不会自动改用其他端口）。")
+        logging.getLogger(__name__).error("端口 %s 被占用，启动中止", PORT)
+        sys.exit(1)
+
+    # 启动前数据库自检：异常时明确提示从备份恢复（不静默继续写）
+    try:
+        from app.services.db_integrity import check_data_dir
+        integrity = check_data_dir()
+        bad = [f for f in integrity["files"]
+               if not f["ok"] and f.get("detail") != "missing"]
+        if bad:
+            detail = "；".join(
+                f"{os.path.basename(f['path'])}: {f['detail']}" for f in bad
+            )
+            logging.getLogger(__name__).error("数据库自检异常: %s", detail)
+            _notify("数据库自检异常",
+                    "检测到数据库文件异常：\n" + detail[:400] +
+                    "\n\n建议先备份故障文件，再从最近备份恢复后重新启动。")
+        else:
+            logging.getLogger(__name__).info("数据库自检通过")
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("数据库自检未执行: %s", exc)
+
+    port = PORT
 
     # 1. 后台启动服务器
     server_thread = threading.Thread(target=_start_server, args=(port,), daemon=True)
