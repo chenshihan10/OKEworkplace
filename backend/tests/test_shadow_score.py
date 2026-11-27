@@ -9,34 +9,36 @@ from app.services.shadow_score import shadow_oi_score, shadow_snapshot  # noqa: 
 
 
 def test_zero_oi_scores_zero():
-    assert shadow_oi_score("LONG", 0) == 0
-    assert shadow_oi_score("NEUTRAL", 0) == 0
+    assert shadow_oi_score("LONG", 0, 0) == 0
+    assert shadow_oi_score("NEUTRAL", 0, 0) == 0
 
 
-def test_full_strength_caps_at_20():
-    assert shadow_oi_score("LONG", 5) == 20
-    assert shadow_oi_score("SHORT", 9) == 20
+def test_no_change_keeps_official_baseline():
+    # OI 变化不可用（窗口不足）时不再制造虚假差距，与正式分项持平
+    assert shadow_oi_score("LONG", 0, 7) == 7
+    assert shadow_oi_score("SHORT", 0, 7) == 7
 
 
-def test_strength_is_proportional():
-    assert shadow_oi_score("LONG", 2.5) == 10
-    assert shadow_oi_score("LONG", -2.5) == 8
-    assert shadow_oi_score("NEUTRAL", 2.5) == 8
-    # 极小的 OI 变化不再拿到正式口径的 8 分
-    assert shadow_oi_score("LONG", 0.01) == 0
+def test_strength_adjusts_around_official_baseline():
+    assert shadow_oi_score("LONG", 5, 7) == 15      # +8 上限
+    assert shadow_oi_score("SHORT", 9, 7) == 15
+    assert shadow_oi_score("LONG", 2.5, 7) == 11    # +4
+    assert shadow_oi_score("LONG", -5, 7) == 3      # -4
+    assert shadow_oi_score("LONG", 5, 20) == 20     # 不超过 20
+    assert shadow_oi_score("NEUTRAL", 2.5, 7) == 7  # 中性不加成
 
 
 def test_snapshot_does_not_mutate_official():
     analysis = SimpleNamespace(
         score=43, direction="LONG",
-        components={"trend": 30, "momentum": 6, "volume": 4, "oi": 2, "funding": 7},
+        components={"trend": 30, "momentum": 6, "volume": 4, "oi": 2, "funding": 1},
     )
-    snap = shadow_snapshot(analysis, 0.3)
+    snap = shadow_snapshot(analysis, 2.5)
     assert analysis.score == 43
     assert snap["official_score"] == 43
     assert snap["official_oi_score"] == 2
-    assert snap["shadow_oi_score"] == 1
-    assert snap["shadow_score"] == 42
+    assert snap["shadow_oi_score"] == 6
+    assert snap["shadow_score"] == 47
 
 
 def test_shadow_persist_throttled():
