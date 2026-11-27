@@ -157,10 +157,48 @@ function showToast(text, duration = 5000) {
   toastTimer = setTimeout(() => el.classList.remove('show'), duration);
 }
 
+/** 后端进程运行时长：按 天/时/分/秒 展示，数据来自 /network/status */
+function formatUptime(seconds) {
+  if (typeof seconds !== 'number' || seconds < 0 || Number.isNaN(seconds)) return '--';
+  const total = Math.floor(seconds);
+  const days = Math.floor(total / 86400);
+  const hh = String(Math.floor((total % 86400) / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+  const ss = String(total % 60).padStart(2, '0');
+  return days > 0 ? `${days}天 ${hh}:${mm}:${ss}` : `${hh}:${mm}:${ss}`;
+}
+
+const PROXY_SOURCE_LABELS = {
+  '环境变量': '环境变量代理',
+  '系统代理': '系统代理',
+  '本地端口探测': '本地端口探测',
+  '手动配置': '手动配置',
+  '应用配置': '应用配置',
+  '直连': '直连'
+};
+
+/** 当前网络出口的简短展示：来源 + host:port；直连时明确提示未使用代理 */
+function proxyExitText(data) {
+  const host = (data.proxy || '').replace(/^https?:\/\//, '');
+  if (!host) return '直连（未检测到代理）';
+  const label = PROXY_SOURCE_LABELS[data.proxy_source] || data.proxy_source || '代理';
+  return `${label} ${host}`;
+}
+
 function renderNetwork(data) {
   const target = document.querySelector('[data-network-status]');
   if (!target) return;
-  
+
+  const uptimeEl = document.querySelector('[data-uptime]');
+  if (uptimeEl) uptimeEl.textContent = formatUptime(data.uptime_seconds);
+
+  const exitEl = document.querySelector('[data-proxy-exit]');
+  if (exitEl) {
+    exitEl.textContent = proxyExitText(data);
+    const line = exitEl.closest('.proxy-exit');
+    if (line) line.classList.toggle('is-direct', !data.proxy);
+  }
+
   const realDot = '\u{1F7E2}';
   const fallbackDot = '\u{1F7E1}';
   const isReal = data.data_source === 'REAL';
@@ -172,7 +210,7 @@ function renderNetwork(data) {
 
   // 中间态直接体现在 title 上：仍显示实时数据，但能看到最近一次更新距今多久
   const ageNote = typeof data.data_age_seconds === 'number' ? ` · 最近数据 ${data.data_age_seconds}s 前` : '';
-  target.title = data.proxy_enabled ? `代理: ${data.proxy}${ageNote}` : labels.proxyDisabled;
+  target.title = `出口: ${proxyExitText(data)}${ageNote}`;
 }
 
 /** 提示里只展示 host:port，不要把完整代理 URL 抛给用户 */
@@ -200,9 +238,11 @@ function checkDataAvailability(network, snapshot) {
       return; // 刚启动，首笔数据还没到，先不判定
     } else {
       toastState.startupChecked = true;
-      showToast(network.proxy_enabled
-        ? `代理未启动，行情暂不可用（${proxyHostPort(network)}）`
-        : '行情暂不可用：网络不可达');
+      if (!network.proxy_enabled) {
+        showToast('未检测到代理：请先打开代理软件；如端口特殊，可在程序目录 proxy.txt 中填写端口', 8000);
+      } else {
+        showToast(`已检测到代理（${proxyHostPort(network)}），但行情不可用，请确认代理已放行 OKX`, 8000);
+      }
     }
   }
 
