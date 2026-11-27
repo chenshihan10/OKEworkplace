@@ -1,0 +1,31 @@
+name: offline-tests
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    name: pytest (offline)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip install "pytest>=8,<10"
+
+      # 只跑 backend/tests：全部离线，不启动服务器、不访问外网。
+      # 根目录 tests/test_integration.py 需要本地服务在跑，不纳入 CI。
+      - name: Run offline tests
+        run: python -m pytest backend/tests -q
