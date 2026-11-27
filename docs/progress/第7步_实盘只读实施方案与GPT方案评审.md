@@ -1,7 +1,7 @@
 # 第 7 步实施方案：实盘只读接入（GPT 方案评审 + 落地计划）
 
 > 日期：2026-11-24　｜　基线：`VERSION = 2.5.0.0`
-> 评审对象：`docs/OKEworkplace_v2.5下一阶段技术指导方案.docx`（GPT 方案，已归档，SHA256 与附件一致）
+> 评审对象：`docs/plan/OKEworkplace_v2.5下一阶段技术指导方案.docx`（GPT 方案，已归档，SHA256 与附件一致）
 > 本轮边界：只做测试版；不写实现代码、不改 `VERSION`、不打包、不动冻结区
 > 结论：**采纳 GPT 的 P0 + P1 范围与总体架构，修正 6 处与现状冲突的实现细节，补充 7 处它未掌握的新情况。**
 
@@ -616,7 +616,7 @@ git diff --stat -- backend/app/model/market_score.py backend/app/services/signal
 
 ## 19. 归档说明
 
-GPT 方案原件已存在于 `docs/OKEworkplace_v2.5下一阶段技术指导方案.docx`，经 SHA256 校验与用户附件完全一致（`A6C89221…52C60`），故不重复复制；本文件即为其评审与实施方案。
+GPT 方案原件已存在于 `docs/plan/OKEworkplace_v2.5下一阶段技术指导方案.docx`，经 SHA256 校验与用户附件完全一致（`A6C89221…52C60`），故不重复复制；本文件即为其评审与实施方案。
 
 ---
 
@@ -649,6 +649,6 @@ GPT 方案原件已存在于 `docs/OKEworkplace_v2.5下一阶段技术指导方�
 
 ### 20.4 相关文档
 
-- 回测与评分实验：`docs/第8步_回测与评分实验_20261126.md`
-- 当前状态汇总：`docs/交接文档.md` 第十一节
-- 外部协作者说明：`docs/交接文档_给GPT协作者_20261124.md` 第十二节
+- 回测与评分实验：`docs/progress/第8步_回测与评分实验_20261126.md`
+- 当前状态汇总：`docs/handover/交接文档.md` 第十一节
+- 外部协作者说明：`docs/handover/交接文档_给GPT协作者_20261124.md` 第十二节
