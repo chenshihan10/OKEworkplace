@@ -65,7 +65,13 @@ async def local_api_guard(request: Request, call_next):
         if token != LOCAL_TOKEN:
             return JSONResponse({"detail": "invalid local token"}, status_code=403)
 
-    return await call_next(request)
+    response = await call_next(request)
+    # 开发态前端模块改动频繁：禁止浏览器启发式缓存，避免旧模块被复用导致页面初始化失败
+    if not getattr(sys, "frozen", False):
+        path = request.url.path
+        if path.startswith("/src/") or path in ("/", "/index.html"):
+            response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 app.include_router(coins.router, prefix="/api/coins", tags=["coins"])
