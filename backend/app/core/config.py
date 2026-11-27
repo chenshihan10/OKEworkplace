@@ -106,6 +106,8 @@ class Settings(BaseModel):
     backup_dir: str = Field(default="")
     backup_keep: int = Field(default=3)
     backup_runtime_hours: int = Field(default=6)
+    # 异地镜像目录（默认用户目录下，避免与程序同盘同目录）
+    backup_mirror_dir: str = Field(default="")
     # 多周期旁路（不改变主周期评分与方向）
     mtf_enabled: bool = Field(default=True)
     mtf_interval_seconds: int = Field(default=60)
@@ -185,6 +187,7 @@ def build_settings() -> Settings:
         # 自动备份
         backup_dir=os.getenv("OKE_BACKUP_DIR", ""),
         backup_keep=int(os.getenv("OKE_BACKUP_KEEP", "3")),
+        backup_mirror_dir=os.getenv("OKE_BACKUP_MIRROR_DIR", ""),
         backup_runtime_hours=int(os.getenv("OKE_BACKUP_RUNTIME_HOURS", "6")),
         # 多周期
         mtf_enabled=os.getenv("OKE_MTF_ENABLED", "true").lower() == "true",

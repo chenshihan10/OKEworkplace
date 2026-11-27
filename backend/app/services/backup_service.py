@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import sqlite3
 from datetime import datetime, timezone
 from typing import Dict, Optional
@@ -35,6 +36,15 @@ class BackupService:
         self.data_dir = data_dir
         self.backup_dir = settings.backup_dir or os.path.join(data_dir, "backups")
         os.makedirs(self.backup_dir, exist_ok=True)
+        # 异地镜像：默认放到用户目录，避免与程序/备份同盘同目录（可用 OKE_BACKUP_MIRROR_DIR 覆盖）
+        self.mirror_dir = settings.backup_mirror_dir or os.path.join(
+            os.path.expanduser("~"), "OKEworkplace_backups"
+        )
+        try:
+            os.makedirs(self.mirror_dir, exist_ok=True)
+        except OSError as exc:
+            logging.getLogger(__name__).warning("backup mirror dir unavailable: %s", exc)
+            self.mirror_dir = ""
         self.last_backup: Dict = {"at": None, "files": [], "removed": 0, "error": None}
         self.last_check: Dict = {"at": None, "action": "idle", "reason": None, "uptime_hours": 0}
         self._started_at = datetime.now(timezone.utc)
@@ -159,20 +169,42 @@ class BackupService:
         return target
 
     def _prune(self) -> int:
+        return self._prune_dir(self.backup_dir)
+
+    def _prune_dir(self, directory: str) -> int:
         removed = 0
         keep = max(1, settings.backup_keep)
+        if not directory or not os.path.isdir(directory):
+            return 0
         for prefix in ("signals_", "user_trades_", "live_account_"):
             files = sorted(
-                (f for f in os.listdir(self.backup_dir) if f.startswith(prefix) and f.endswith(".db")),
+                (f for f in os.listdir(directory) if f.startswith(prefix) and f.endswith(".db")),
                 reverse=True,
             )
             for old in files[keep:]:
                 try:
-                    os.remove(os.path.join(self.backup_dir, old))
+                    os.remove(os.path.join(directory, old))
                     removed += 1
                 except OSError:
                     continue
         return removed
+
+    def _mirror(self, files: list) -> Dict:
+        """把刚生成的备份复制到异地镜像目录，并同样按份数清理。失败只记录，不影响本地备份结果。"""
+        result: Dict = {"dir": self.mirror_dir, "files": [], "error": None}
+        if not self.mirror_dir:
+            result["error"] = "mirror dir unavailable"
+            return result
+        try:
+            for src in files:
+                dst = os.path.join(self.mirror_dir, os.path.basename(src))
+                shutil.copy2(src, dst)
+                result["files"].append(dst)
+            self._prune_dir(self.mirror_dir)
+        except Exception as exc:  # noqa: BLE001
+            result["error"] = str(exc)
+            logging.getLogger(__name__).warning("mirror backup failed: %s", exc)
+        return result
 
     def create_backup(self) -> dict:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -185,6 +217,7 @@ class BackupService:
                 "at": datetime.now(timezone.utc).isoformat(),
                 "files": files,
                 "removed": removed,
+                "mirror": self._mirror(files),
                 "error": None,
             }
         except Exception as exc:
@@ -204,6 +237,7 @@ class BackupService:
         ) if os.path.isdir(self.backup_dir) else []
         return {
             "backup_dir": self.backup_dir,
+            "mirror_dir": self.mirror_dir,
             "keep": settings.backup_keep,
             "runtime_hours": settings.backup_runtime_hours,
             "first_run_minutes": FIRST_RUN_MINUTES,
