@@ -221,6 +221,12 @@ class MarketService:
         raw_dir = analysis.direction
         raw_score = analysis.score if analysis.score is not None else 0
         stabilized = tracker.feed(raw_dir, raw_score)
+        # 只观测：记录原始/稳定方向的翻转频率，供健康页与异常排查使用
+        try:
+            from app.services.health_monitor import direction_monitor
+            direction_monitor.record(item.symbol, raw_dir, stabilized["direction"])
+        except Exception:  # noqa: BLE001
+            pass
         # 更新分析结果为稳定方向
         signal["raw_direction"] = raw_dir  # 保留原始方向供诊断
         analysis.direction = stabilized["direction"]
