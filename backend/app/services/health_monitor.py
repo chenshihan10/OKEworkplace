@@ -68,3 +68,10 @@ class DirectionMonitor:
 
 
 direction_monitor = DirectionMonitor()
+
+
+def should_alert_stale(data_age, threshold, last_alert_ts, now, cooldown_seconds: int = 600) -> bool:
+    """数据停更告警判定（纯函数）：超过阈值且距上次告警达到冷却时间。"""
+    if data_age is None or threshold is None or threshold <= 0 or data_age < threshold:
+        return False
+    return last_alert_ts is None or (now - last_alert_ts) >= cooldown_seconds
