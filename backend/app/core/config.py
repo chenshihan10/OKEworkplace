@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 from pathlib import Path
 
@@ -54,7 +54,7 @@ APP_VERSION = read_version()
 
 
 class Settings(BaseModel):
-    oke_base_url: str = Field(default="https://api.example.com")
+    oke_base_url: str = Field(default="https://www.okx.com")
     oke_api_key: str = Field(default="")
     oke_secret_key: str = Field(default="")
     http_proxy: str = Field(default="")
@@ -136,7 +136,7 @@ class Settings(BaseModel):
 
 def build_settings() -> Settings:
     return Settings(
-        oke_base_url=os.getenv("OKE_BASE_URL", "https://api.example.com"),
+        oke_base_url=os.getenv("OKE_BASE_URL", "https://www.okx.com"),
         oke_api_key=os.getenv("OKE_API_KEY", ""),
         oke_secret_key=os.getenv("OKE_SECRET_KEY", ""),
         http_proxy=os.getenv("HTTP_PROXY", ""),
@@ -226,3 +226,4 @@ def requests_proxies() -> dict:
     if settings.https_proxy:
         proxies["https"] = settings.https_proxy
     return proxies
+
