@@ -91,6 +91,82 @@ def _wait_for_server(port, timeout=30):
     return False
 
 
+def _write_startup_log(port):
+    """记录本次启动的关键信息（打包后没有控制台，用户可据此确认网络出口）"""
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(f"http://{HOST}:{port}/network/status", timeout=3) as resp:
+            info = json.loads(resp.read().decode("utf-8"))
+        source = info.get("proxy_source") or "未知"
+        proxy = info.get("proxy") or ""
+        exit_text = f"{source} {proxy}".strip() if proxy else f"{source}（未检测到代理）"
+        with open(_LOG_DIR / "startup.log", "w", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] OKEworkplace v{APP_VERSION} 启动\n")
+            f.write(f"  监听端口: {port}\n")
+            f.write(f"  网络出口: {exit_text}\n")
+    except Exception:
+        pass
+
+
+def _append_startup_log(*lines):
+    """向 startup.log 追加一行说明（打包版没有控制台，供用户/排查使用）"""
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        with open(_LOG_DIR / "startup.log", "a", encoding="utf-8") as f:
+            for line in lines:
+                f.write(f"  {line}\n")
+    except Exception:
+        pass
+
+
+def _reset_startup_error_log():
+    """每次启动清空上一次的报错记录，避免用户看到已经解决的历史错误"""
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        if _STARTUP_LOG.exists():
+            _STARTUP_LOG.unlink()
+    except Exception:
+        pass
+
+
+def _clear_zone_identifier():
+    """清掉打包文件上的「来自 Internet」标记（Mark-of-the-Web）。
+
+    从浏览器下载 zip 再解压时，Windows 会给每个文件写入 Zone.Identifier
+    备用数据流；.NET Framework 默认拒绝加载这类程序集
+    （loadFromRemoteSources），导致 pythonnet / pywebview 初始化失败，
+    只剩浏览器回退。这里在创建窗口前把标记清掉。
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        base = Path(sys.executable).resolve().parent
+        for path in base.rglob("*"):
+            if path.suffix.lower() not in (".dll", ".exe", ".pyd"):
+                continue
+            stream = str(path) + ":Zone.Identifier"
+            try:
+                if os.path.exists(stream):
+                    os.remove(stream)
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
+def _gui_ready():
+    """检查 pythonnet（.NET）能否初始化；不能则直接走浏览器回退。"""
+    try:
+        import clr  # noqa: F401
+        return True, ""
+    except Exception as exc:  # noqa: BLE001
+        return False, f"{type(exc).__name__}: {exc}"
+
+
 def _start_server(port):
     """在后台线程中启动 uvicorn（静默模式）"""
     try:
@@ -277,6 +353,10 @@ if __name__ == "__main__":
     if port != 8000:
         print(f"  ⚠ 端口 8000 被占用，自动使用端口 {port}")
 
+    # 清理上一次的报错记录与下载文件的「来自 Internet」标记（否则 .NET 拒绝加载）
+    _reset_startup_error_log()
+    _clear_zone_identifier()
+
     # 1. 后台启动服务器
     server_thread = threading.Thread(target=_start_server, args=(port,), daemon=True)
     server_thread.start()
@@ -295,14 +375,30 @@ if __name__ == "__main__":
     print("  正在打开窗口...")
     print("=" * 46)
     print()
+
+    # 启动日志：记录端口与最终网络出口，便于排查「双击没数据」的问题
+    _write_startup_log(port)
     print("  📌 关闭窗口即可自动停止服务")
     print()
 
-    # 3. 尝试打开独立窗口，失败则回退浏览器
-    if not _open_gui_window(port):
+    from app.shutdown import shutdown_event
+
+    # 3. 打开窗口：优先独立窗口；.NET 不可用时直接走系统浏览器，不写报错日志
+    gui_ok, gui_reason = _gui_ready()
+    if gui_ok:
+        _append_startup_log("窗口后端: 独立窗口（WebView2）")
+        if not _open_gui_window(port):
+            _append_startup_log("提示: 独立窗口启动失败，已改用系统浏览器（功能一致）")
+            _open_browser(port)
+            shutdown_event.wait()
+    else:
+        _append_startup_log(
+            f"窗口后端: 系统浏览器（回退，原因: {gui_reason}）",
+            "提示: 安装 .NET Framework 4.8 后可恢复独立窗口，功能不受影响",
+        )
+        # 浏览器模式同样启动托盘，保证用户能正常退出程序
+        threading.Thread(target=_start_tray_icon, args=([None],), daemon=True).start()
         _open_browser(port)
-        # 浏览器模式下等待关闭信号
-        from app.shutdown import shutdown_event
         shutdown_event.wait()
 
     # 4. 关闭后处理
