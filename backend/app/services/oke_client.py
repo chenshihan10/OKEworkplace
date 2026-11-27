@@ -1,7 +1,14 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import locale
 import os
+import socket
+import subprocess
+import sys
 import threading
+import time
 from typing import Optional
 
 import requests
@@ -13,7 +20,7 @@ try:
 except Exception:
     CA_BUNDLE = True
 
-from app.core.config import requests_proxies
+from app.core.config import BASE_DIR, requests_proxies
 
 # OKX K 线周期是大小写敏感的（15m / 1H / 4H / 1D），
 # 用户配置或旧数据里常见的 1h/4h/1d 需要先规范化，否则接口直接报错。
@@ -33,6 +40,37 @@ def normalize_bar(timeframe: str) -> str:
 _thread_local = threading.local()
 
 
+def _parse_proxy_server(raw: str) -> dict:
+    """解析注册表 ProxyServer，兼容 host:port、http://host:port、http=...;https=... 三种写法。"""
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+
+    def normalize(addr: str) -> str:
+        addr = addr.strip()
+        return addr if "://" in addr else f"http://{addr}"
+
+    if "=" in raw:
+        mapping = {}
+        for part in raw.split(";"):
+            if "=" not in part:
+                continue
+            kind, addr = part.split("=", 1)
+            if addr.strip():
+                mapping[kind.strip().lower()] = normalize(addr)
+        http = mapping.get("http") or mapping.get("https")
+        https = mapping.get("https") or mapping.get("http")
+        result = {}
+        if http:
+            result["http"] = http
+        if https:
+            result["https"] = https
+        return result
+
+    proxy = normalize(raw)
+    return {"http": proxy, "https": proxy}
+
+
 def _read_windows_proxy_settings():
     """读取 Windows 系统代理设置（注册表），主流应用的标准做法"""
     try:
@@ -42,57 +80,209 @@ def _read_windows_proxy_settings():
             enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
             if enable:
                 proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
-                if proxy_server:
-                    # 处理带协议前缀的情况
-                    if "://" not in proxy_server:
-                        proxy_server = f"http://{proxy_server}"
-                    return {
-                        "http": proxy_server if "://" in proxy_server else f"http://{proxy_server}",
-                        "https": proxy_server if "://" in proxy_server else f"http://{proxy_server}",
-                    }
+                parsed = _parse_proxy_server(proxy_server)
+                if parsed:
+                    return parsed
     except Exception:
         pass
     return None
 
 
-def build_proxy_attempts():
+# 常见本地代理端口：优先验证这几个，再扫描其它本机监听端口
+_PROXY_PROBE_PORTS = (12334, 7890, 10809, 2080)
+_proxy_probe_cache = {"ts": 0.0, "proxies": ()}
+_proxy_probe_lock = threading.Lock()
+_manual_proxy_cache = {"ts": 0.0, "proxy": None}
+_manual_proxy_lock = threading.Lock()
+
+# 最近一次真正成功的出口（source 为空表示还没有成功记录）
+_proxy_exit = {"source": "", "proxy": "", "ts": 0.0}
+_proxy_exit_lock = threading.Lock()
+
+
+def _listening_ports() -> set:
+    """本机处于 LISTENING 状态的 loopback 端口，用于发现非默认端口的本地代理。"""
+    ports = set()
+    try:
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        proc = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"],
+            capture_output=True,
+            timeout=5,
+            startupinfo=si,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW：打包后不要闪黑框
+        )
+        # netstat 输出是系统本地编码（中文 Windows 为 GBK），按本地编码解码
+        raw = proc.stdout or b""
+        try:
+            output = raw.decode(locale.getpreferredencoding(False) or "utf-8", "ignore")
+        except Exception:
+            output = raw.decode("ascii", "ignore")
+        for line in output.splitlines():
+            parts = line.split()
+            if len(parts) < 4 or parts[0].upper() != "TCP" or parts[3].upper() != "LISTENING":
+                continue
+            host, _, port = parts[1].rpartition(":")
+            if host not in ("127.0.0.1", "0.0.0.0", "[::1]", "[::]"):
+                continue
+            try:
+                value = int(port)
+            except ValueError:
+                continue
+            if 1024 <= value <= 65535:
+                ports.add(value)
+    except Exception:
+        pass
+    return ports
+
+
+def _verify_http_proxy(port: int, timeout: float = 0.8) -> bool:
+    """用 CONNECT 握手指令验证端口确实是可用的 HTTP 代理。"""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            sock.sendall(b"CONNECT www.okx.com:443 HTTP/1.1\r\nHost: www.okx.com:443\r\n\r\n")
+            head = sock.recv(64)
+            return head.startswith(b"HTTP/1.1 200") or head.startswith(b"HTTP/1.0 200")
+    except Exception:
+        return False
+
+
+def _probe_local_proxy():
+    """扫描本机监听端口，找出真正可用的 HTTP 代理。
+
+    先验证常见端口，再并行验证其它监听端口（排除程序自身端口）。
+    结果缓存：命中时 120 秒，未命中时 30 秒，便于用户中途启动代理。
     """
-    主流策略：系统代理（环境变量）→ Windows 注册表代理 → 用户配置代理 → 直连
-    这是国内主流客户端（微信、飞书、各浏览器）的通用做法。
-    公共客户端与私有只读客户端共用同一份代理顺序，避免两套逻辑漂移。
+    now = time.monotonic()
+    with _proxy_probe_lock:
+        if now - _proxy_probe_cache["ts"] < (120 if _proxy_probe_cache["proxies"] else 30):
+            return _proxy_probe_cache["proxies"]
+
+        own_ports = set(range(8000, 8020))
+        candidates = [p for p in _PROXY_PROBE_PORTS if p not in own_ports]
+        candidates += sorted(_listening_ports() - set(candidates) - own_ports)
+
+        found = []
+        if candidates:
+            with ThreadPoolExecutor(max_workers=12) as pool:
+                results = list(pool.map(_verify_http_proxy, candidates))
+            found = [
+                {"http": f"http://127.0.0.1:{port}", "https": f"http://127.0.0.1:{port}"}
+                for port, ok in zip(candidates, results)
+                if ok
+            ]
+
+        _proxy_probe_cache["ts"] = now
+        _proxy_probe_cache["proxies"] = tuple(found)
+        return _proxy_probe_cache["proxies"]
+
+
+def _manual_proxy_path() -> Path:
+    """手动代理配置文件：打包版放在 exe 同级，开发模式放在 backend 目录。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "proxy.txt"
+    return BASE_DIR / "proxy.txt"
+
+
+def _read_manual_proxy():
+    """读取 proxy.txt：每行一个代理，支持 host:port / http://host:port / 纯端口号。"""
+    now = time.monotonic()
+    with _manual_proxy_lock:
+        if now - _manual_proxy_cache["ts"] < 30:
+            return _manual_proxy_cache["proxy"]
+        result = None
+        try:
+            path = _manual_proxy_path()
+            if path.is_file():
+                raw = path.read_bytes()
+                try:
+                    text = raw.decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    # 记事本另存为 ANSI(GBK) 时也能读
+                    text = raw.decode("gbk", "ignore")
+                for line in text.splitlines():
+                    line = line.replace("\ufeff", "").strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "://" not in line:
+                        line = line if ":" in line else f"127.0.0.1:{line}"
+                        line = f"http://{line}"
+                    result = {"http": line, "https": line}
+                    break
+        except Exception:
+            result = None
+        _manual_proxy_cache["ts"] = now
+        _manual_proxy_cache["proxy"] = result
+        return result
+
+
+def record_proxy_exit(source: str, proxies: dict) -> None:
+    """记录最近一次成功请求实际走的出口，供界面与启动日志展示。"""
+    url = (proxies or {}).get("https") or (proxies or {}).get("http") or ""
+    with _proxy_exit_lock:
+        _proxy_exit.update(source=source, proxy=url, ts=time.time())
+
+
+def last_proxy_exit() -> dict:
+    with _proxy_exit_lock:
+        return dict(_proxy_exit)
+
+
+def detect_proxy_exit() -> tuple:
+    """不做真实请求的静态判定：返回 (出口说明, 代理地址)；都没有则 ("直连", "")。"""
+    for source, proxies in build_proxy_attempts_labeled():
+        if proxies:
+            return source, proxies.get("https") or proxies.get("http") or ""
+    return "直连", ""
+
+
+def build_proxy_attempts_labeled():
+    """按优先级返回 [(出口说明, proxies), ...]。
+
+    顺序：环境变量 → 程序目录 proxy.txt → Windows 系统代理 → 应用配置
+    → 本地端口探测 → 直连。
+    proxy.txt 是用户显式指定，必须排在自动探测之前，否则自动探测命中
+    错误/残留代理时用户无法纠正。
     """
     attempts = []
     seen = set()
 
-    # 1. 系统代理（环境变量）- 最优先，用户在系统设置中配置
+    def add(source: str, proxies: dict) -> None:
+        key = frozenset(proxies.items())
+        if key in seen:
+            return
+        seen.add(key)
+        attempts.append((source, proxies))
+
     env_http = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
     env_https = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
     if env_http:
-        proxy_cfg = frozenset({"http": env_http, "https": env_https or env_http}.items())
-        if proxy_cfg not in seen:
-            seen.add(proxy_cfg)
-            attempts.append({"http": env_http, "https": env_https or env_http})
+        add("环境变量", {"http": env_http, "https": env_https or env_http})
 
-    # 2. 注册表读取系统代理（Windows 专属）
+    manual = _read_manual_proxy()
+    if manual:
+        add("手动配置", manual)
+
     registry_proxy = _read_windows_proxy_settings()
     if registry_proxy:
-        proxy_cfg = frozenset(registry_proxy.items())
-        if proxy_cfg not in seen:
-            seen.add(proxy_cfg)
-            attempts.append(registry_proxy)
+        add("系统代理", registry_proxy)
 
-    # 3. 用户手动配置的代理（.env 文件中的应用内设置）
     configured = requests_proxies()
     if configured:
-        proxy_cfg = frozenset(configured.items())
-        if proxy_cfg not in seen:
-            seen.add(proxy_cfg)
-            attempts.append(configured)
+        add("应用配置", configured)
 
-    # 4. 直连（最终兜底）
-    attempts.append({})
+    for probed in _probe_local_proxy():
+        add("本地端口探测", probed)
 
+    attempts.append(("直连", {}))
     return attempts
+
+
+def build_proxy_attempts():
+    """兼容旧调用方：只返回 proxies 列表。"""
+    return [proxies for _, proxies in build_proxy_attempts_labeled()]
 
 
 @dataclass
@@ -104,10 +294,9 @@ class OKEClient:
 
     def _request(self, path: str, params: dict) -> dict:
         url = self.base_url.rstrip("/") + path
-        attempts = build_proxy_attempts()
 
         last_error = None
-        for proxies in attempts:
+        for source, proxies in build_proxy_attempts_labeled():
             try:
                 response = self._session.get(
                     url,
@@ -120,6 +309,7 @@ class OKEClient:
                 payload = response.json()
                 if isinstance(payload, dict) and payload.get("code") not in (None, "0"):
                     raise RuntimeError("OKE API error: %s" % payload.get("msg", "unknown"))
+                record_proxy_exit(source, proxies)
                 return payload
             except Exception as exc:
                 last_error = exc
