@@ -61,6 +61,13 @@ class Settings(BaseModel):
     https_proxy: str = Field(default="")
     poll_interval_seconds: int = Field(default=5)
     default_timeframes: list = Field(default_factory=lambda: ["5m", "15m", "1h", "4h"])
+    # 代币化股票（OKX 上的股票类合约），评估时与加密品种分开统计
+    tokenized_stock_symbols: list = Field(
+        default_factory=lambda: [
+            "NVDA", "SNDK", "TSLA", "AAPL", "MSFT", "AMZN", "GOOGL", "META",
+            "COIN", "MSTR", "SPY", "QQQ", "NFLX", "AMD", "INTC",
+        ]
+    )
     signal_cooldown_minutes: int = Field(default=30)
     btc_levels: list = Field(default_factory=lambda: [59000, 60000, 62000, 63000])
     eth_levels: list = Field(default_factory=lambda: [1700, 1730, 1750, 1780, 1800, 1830])
@@ -136,6 +143,13 @@ def build_settings() -> Settings:
         https_proxy=os.getenv("HTTPS_PROXY", ""),
         poll_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "5")),
         default_timeframes=os.getenv("MONITOR_TIMEFRAMES", "5m,15m,1h,4h").split(","),
+        tokenized_stock_symbols=[
+            x.strip().upper()
+            for x in os.getenv(
+                "OKE_TOKENIZED_STOCK_SYMBOLS",
+                "NVDA,SNDK,TSLA,AAPL,MSFT,AMZN,GOOGL,META,COIN,MSTR,SPY,QQQ,NFLX,AMD,INTC",
+            ).split(",") if x.strip()
+        ],
         signal_cooldown_minutes=int(os.getenv("SIGNAL_COOLDOWN_MINUTES", "30")),
         btc_levels=[float(x) for x in os.getenv("BTC_LEVELS", "59000,60000,62000,63000").split(",")],
         eth_levels=[float(x) for x in os.getenv("ETH_LEVELS", "1700,1730,1750,1780,1800,1830").split(",")],

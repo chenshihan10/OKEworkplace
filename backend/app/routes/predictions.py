@@ -96,6 +96,12 @@ def performance_detail(symbol: Optional[str] = None,
     return {"total": total, "limit": limit, "offset": offset, "items": items}
 
 
+@router.get("/v3/performance/quality", summary="绩效质量：置信区间/成本门槛/品种分类/影子与监控")
+def performance_quality_view():
+    from app.services.performance_quality import performance_quality_overview
+    return performance_quality_overview()
+
+
 @router.get("/v3/performance/context-summary", summary="按多周期/订单流上下文分桶的绩效")
 def performance_context_summary(symbol: Optional[str] = None,
                                 start: Optional[str] = None,
