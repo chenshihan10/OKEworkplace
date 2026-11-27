@@ -96,7 +96,30 @@ def on_startup() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "version": APP_VERSION}
+    """健康检查：保留 status/version 兼容字段，并附带数据新鲜度与数据库自检。
+
+    `status` 始终为 ok（兼容桌面壳的就绪探测）；业务是否正常看 `degraded` / `data_age_seconds`。
+    """
+    payload = {"status": "ok", "version": APP_VERSION, "degraded": False}
+    try:
+        from app.services.network_service import network_status
+        net = network_status()
+        payload.update({
+            "degraded": net.get("data_source") != "REAL",
+            "started_at": net.get("started_at"),
+            "uptime_seconds": net.get("uptime_seconds"),
+            "data_source": net.get("data_source"),
+            "last_success_at": net.get("last_success_at"),
+            "data_age_seconds": net.get("data_age_seconds"),
+        })
+    except Exception as exc:  # noqa: BLE001  健康检查不能因此 500
+        payload["data_error"] = str(exc)
+    try:
+        from app.services.db_integrity import check_data_dir
+        payload["db"] = check_data_dir()
+    except Exception as exc:  # noqa: BLE001
+        payload["db"] = {"ok": None, "error": str(exc)}
+    return payload
 
 
 @app.get("/")
